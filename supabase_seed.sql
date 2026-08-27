@@ -1,0 +1,86 @@
+-- supabase_seed.sql
+-- SITugas - Sistem Manajemen Tugas Kuliah
+-- Database Seed File
+
+-- =========================================================================
+-- PANDUAN BOOTSTRAP DAN SEEDING DATA AWAL (READ THIS FIRST)
+-- =========================================================================
+-- 1. Jangan jalankan insert ke tabel 'profiles' secara manual karena tabel
+--    ini memiliki trigger 'on_auth_user_created' yang otomatis membuat data
+--    profile ber-role 'student' setiap kali akun dibuat di auth.users.
+-- 2. Akun dosen (role: 'lecturer') didaftarkan dengan membuat akun di auth.users 
+--    terlebih dahulu, lalu mengubah kolom 'role' pada baris profile yang sesuai
+--    menjadi 'lecturer' (lihat bagian "Mekanisme Bootstrap Akun Dosen").
+-- 3. Gantilah UUID placeholder di bawah ini dengan UUID rill dari auth.users 
+--    setelah proses pendaftaran akun selesai dilakukan di Supabase Auth Dashboard.
+-- =========================================================================
+
+-- ==========================================
+-- STEP 1: CONTOH BOOTSTRAP AKUN DOSEN PERTAMA
+-- ==========================================
+-- Setelah Anda mendaftarkan akun dosen (misalnya email: dosen@situgas.ac.id)
+-- lewat dashboard Supabase Auth, dapatkan UUID akun tersebut, kemudian jalankan query:
+--
+-- UPDATE public.profiles 
+-- SET role = 'lecturer', name = 'Dr. Ir. Budi Santoso, M.T.' 
+-- WHERE email = 'dosen@situgas.ac.id';
+
+-- ==========================================
+-- STEP 2: SEED DATA MATA KULIAH (COURSES)
+-- ==========================================
+-- Ganti '00000000-0000-0000-0000-000000000000' dengan UUID Dosen yang sesungguhnya.
+--
+-- INSERT INTO public.courses (id, code, name, lecturer_id) VALUES
+--   ('c1111111-1111-1111-1111-111111111111', 'IF-MOB', 'Pemrograman Perangkat Bergerak', '00000000-0000-0000-0000-000000000000'),
+--   ('c2222222-2222-2222-2222-222222222222', 'IF-DMBD', 'Desain Manajemen Basis Data', '00000000-0000-0000-0000-000000000000'),
+--   ('c3333333-3333-3333-3333-333333333333', 'IF-SPK', 'Sistem Pendukung Keputusan', '00000000-0000-0000-0000-000000000000')
+-- ON CONFLICT (code) DO NOTHING;
+
+-- ==========================================
+-- STEP 3: CONTOH SEED PENDAFTARAN MAHASISWA (ENROLLMENTS)
+-- ==========================================
+-- Setelah dosen mendaftarkan mahasiswa melalui menu "Master Mahasiswa" 
+-- (yang membuat akun di auth.users dan memicu insert profiles otomatis),
+-- data pendaftaran kelas dapat dimasukkan ke tabel enrollments.
+-- Ganti student_id dengan UUID asli mahasiswa bersangkutan:
+--
+-- INSERT INTO public.enrollments (course_id, student_id, class_name, room_name) VALUES
+--   ('c1111111-1111-1111-1111-111111111111', 'student_uuid_1', 'IF-4A', 'R301'),
+--   ('c2222222-2222-2222-2222-222222222222', 'student_uuid_1', 'IF-4A', 'LAB-02'),
+--   ('c1111111-1111-1111-1111-111111111111', 'student_uuid_2', 'IF-4A', 'R301')
+-- ON CONFLICT (course_id, student_id) DO NOTHING;
+
+-- ==========================================
+-- STEP 4: SEED DATA TUGAS (ASSIGNMENTS)
+-- ==========================================
+-- Contoh pembuatan tugas perkuliahan oleh dosen:
+--
+-- INSERT INTO public.assignments (id, course_id, title, description, deadline, max_points, status) VALUES
+--   (
+--     'a1111111-1111-1111-1111-111111111111', 
+--     'c1111111-1111-1111-1111-111111111111', 
+--     'Tugas 1: Integrasi Maps di Android', 
+--     'Buat aplikasi Android sederhana yang menampilkan Google Maps dan menaruh marker pada koordinat tertentu.', 
+--     now() + interval '7 days', 
+--     100, 
+--     'published'
+--   ),
+--   (
+--     'a2222222-2222-2222-2222-222222222222', 
+--     'c2222222-2222-2222-2222-222222222222', 
+--     'Tugas Akhir: Desain Skema ERD Ritel', 
+--     'Rancang dokumen fisik ERD dan skema relasional lengkap untuk industri e-commerce berskala menengah.', 
+--     now() + interval '14 days', 
+--     100, 
+--     'published'
+--   ),
+--   (
+--     'a3333333-3333-3333-3333-333333333333', 
+--     'c1111111-1111-1111-1111-111111111111', 
+--     'Draft Tugas 2: Push Notifications', 
+--     'Latihan integrasi push notification Firebase ke aplikasi React Native.', 
+--     now() + interval '20 days', 
+--     100, 
+--     'draft'
+--   )
+-- ON CONFLICT (id) DO NOTHING;
