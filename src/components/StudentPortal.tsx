@@ -60,6 +60,21 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
   const [showClosedModal, setShowClosedModal] = useState(false);
   const [closedModalTaskTitle, setClosedModalTaskTitle] = useState('');
 
+  // Get initials for student avatar (e.g. "Ahmad Asep" -> "AA", "Sarah Fauzi Wibawa" -> "SF")
+  const getInitials = (name: string) => {
+    if (!name) return 'MH';
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+    if (parts.length === 1) {
+      return parts[0].length >= 2 
+        ? parts[0].substring(0, 2).toUpperCase() 
+        : parts[0][0].toUpperCase();
+    }
+    return 'MH';
+  };
+
   // Enrollments state
   const [enrollments, setEnrollments] = useState<any[]>([]);
   const [selectedEnrollment, setSelectedEnrollment] = useState<any | null>(null);
@@ -631,13 +646,20 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
             <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
           </span>
           <div className="flex items-center gap-3 border-l border-outline-variant/20 pl-4">
-            <div className="w-8 h-8 rounded-full overflow-hidden border border-outline-variant select-none">
-              <img 
-                className="w-full h-full object-cover" 
-                src={user.avatarUrl || undefined} 
-                alt="Student profile"
-                referrerPolicy="no-referrer"
-              />
+            <div className="w-8 h-8 rounded-full overflow-hidden border border-outline-variant/30 bg-gradient-to-br from-[#0B2147] to-[#1E3A8A] text-white flex items-center justify-center font-bold text-xs select-none shadow-sm">
+              {user.avatarUrl ? (
+                <img 
+                  className="w-full h-full object-cover" 
+                  src={user.avatarUrl} 
+                  alt={user.name}
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLElement).style.display = 'none';
+                  }}
+                />
+              ) : (
+                <span>{getInitials(user.name)}</span>
+              )}
             </div>
             <div className="hidden sm:block text-left select-none">
               <p className="text-xs font-bold text-primary">{user.name}</p>
@@ -1330,8 +1352,20 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
             {activeTab === 'profile' && (
               <div className="space-y-4 animate-in fade-in duration-200">
                 <div className="bg-white p-6 rounded-2xl border border-outline-variant/30 auth-card-shadow text-center space-y-4">
-                  <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-primary mx-auto">
-                    <img className="w-full h-full object-cover" src={user.avatarUrl || undefined} alt="Profile" />
+                  <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-primary/20 bg-gradient-to-br from-[#0B2147] to-[#1E3A8A] text-white mx-auto flex items-center justify-center font-bold text-2xl shadow-md select-none tracking-wider">
+                    {user.avatarUrl ? (
+                      <img 
+                        className="w-full h-full object-cover" 
+                        src={user.avatarUrl} 
+                        alt={user.name} 
+                        referrerPolicy="no-referrer"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLElement).style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      <span>{getInitials(user.name)}</span>
+                    )}
                   </div>
                   <div>
                     <h3 className="text-base font-bold text-primary">{user.name}</h3>
