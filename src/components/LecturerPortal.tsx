@@ -2380,32 +2380,6 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                 className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-150 cursor-pointer ${
                   isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5 gap-3'
                 } ${
-                  activeTab === 'students' 
-                    ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
-                    : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
-                }`}
-                onClick={() => setActiveTab('students')}
-              >
-                {activeTab === 'students' && (
-                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
-                )}
-                <Users className={`w-[18px] h-[18px] shrink-0 transition-colors duration-150 ${
-                  activeTab === 'students' ? 'text-[#14B8A6]' : 'text-[#64748B] group-hover:text-[#14B8A6]'
-                }`} />
-                {!isSidebarCollapsed && <span className="text-sm truncate leading-none">Mahasiswa</span>}
-                {isSidebarCollapsed && (
-                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#0F172A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
-                    Mahasiswa
-                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#0F172A]" />
-                  </div>
-                )}
-              </button>
-
-              <button 
-                type="button"
-                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-150 cursor-pointer ${
-                  isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5 gap-3'
-                } ${
                   activeTab === 'master_students' 
                     ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
                     : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
@@ -2661,25 +2635,6 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                   )}
                   <FileSpreadsheet className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'materials' ? 'text-[#14B8A6]' : 'text-[#64748B]'}`} />
                   <span className="text-sm truncate leading-none">Materi Perkuliahan</span>
-                </button>
-
-                <button 
-                  type="button"
-                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-150 cursor-pointer ${
-                    activeTab === 'students' 
-                      ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
-                      : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
-                  }`}
-                  onClick={() => {
-                    setActiveTab('students');
-                    setIsMobileSidebarOpen(false);
-                  }}
-                >
-                  {activeTab === 'students' && (
-                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
-                  )}
-                  <Users className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'students' ? 'text-[#14B8A6]' : 'text-[#64748B]'}`} />
-                  <span className="text-sm truncate leading-none">Mahasiswa</span>
                 </button>
 
                 <button 
@@ -3710,129 +3665,6 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
           )
         )}
 
-        {/* TAB 3: DAFTAR MAHASISWA */}
-        {activeTab === 'students' && (
-          <div className="space-y-6">
-            <div>
-              <h1 className="text-xl md:text-2xl font-bold tracking-tight text-primary">Daftar Mahasiswa Terdaftar</h1>
-              <p className="text-xs text-on-surface-variant font-semibold mt-0.5">Kelola data mahasiswa aktif, detail kelas, serta rekam nilai akademik.</p>
-            </div>
-
-            <div className="bg-white rounded-2xl border border-outline-variant/30 auth-card-shadow overflow-hidden">
-              {/* Filter Row */}
-              <div className="p-4 border-b border-outline-variant/15 grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant w-4 h-4" />
-                  <input 
-                    className="pl-9 pr-4 py-2 bg-gray-50 border border-outline-variant/60 rounded-xl text-xs focus:ring-2 focus:ring-primary/10 focus:border-primary outline-none transition-all w-full font-medium text-primary"
-                    placeholder="Cari mahasiswa berdasarkan nama/NIM..." 
-                    type="text"
-                    value={studentSearch}
-                    onChange={(e) => setStudentSearch(e.target.value)}
-                  />
-                </div>
-
-                <select
-                  className="px-3 py-2 bg-gray-50 border border-outline-variant/60 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-primary/10 outline-none text-primary cursor-pointer"
-                  value={selectedCourseFilter}
-                  onChange={(e) => setSelectedCourseFilter(e.target.value)}
-                >
-                  <option value="all">Semua Mata Kuliah</option>
-                  {courses.map(c => (
-                    <option key={c.code} value={c.code}>{c.name}</option>
-                  ))}
-                </select>
-
-                <select
-                  className="px-3 py-2 bg-gray-50 border border-outline-variant/60 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-primary/10 outline-none text-primary cursor-pointer"
-                  value={selectedClassFilter}
-                  onChange={(e) => setSelectedClassFilter(e.target.value)}
-                >
-                  <option value="all">Semua Kelas</option>
-                  <option value="IF-4A">IF-4A</option>
-                  <option value="IF-4B">IF-4B</option>
-                  <option value="IF-5A">IF-5A</option>
-                  <option value="IF-5B">IF-5B</option>
-                  <option value="IF-6A">IF-6A</option>
-                  <option value="IF-6B">IF-6B</option>
-                </select>
-              </div>
-
-              {/* Students Grid */}
-              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                {filteredStudents.length === 0 ? (
-                  <p className="col-span-2 text-center py-12 text-xs font-medium text-on-surface-variant">Mahasiswa tidak ditemukan.</p>
-                ) : (
-                  filteredStudents.map(stud => {
-                    // Find his submissions
-                    const studSubmissions = submissions.filter(s => s.userUid === stud.uid);
-                    const graded = studSubmissions.filter(s => s.grade !== null);
-                    const avgGrade = graded.length > 0 ? Math.round(graded.reduce((acc, curr) => acc + curr.grade, 0) / graded.length) : 'N/A';
-                    
-                    return (
-                      <div key={stud.id} className="p-4 bg-slate-50 border border-outline-variant/20 rounded-xl hover:border-primary/20 transition-all space-y-4">
-                        <div className="flex gap-4 items-center">
-                          <img 
-                            className="w-12 h-12 rounded-full object-cover border border-outline-variant" 
-                            src={stud.avatarUrl || 'https://lh3.googleusercontent.com/aida-public/AB6AXuB7ge-UpfQHDlk_KyVj-ZNtSDgwDENO3uUEByNxmVlFleVQYou_y3KnlyXyqLW27u8c661iO97BuoxkRNnALRJAQtjydFVvAmrjq9FUIICdZSKbK95t9dYWUS4GsIJbBh2vAG1JGDtm6IpzKoNq6bg-72QmgCX6Wt4-s59NQfOC64XpVtj0YN6JLnbhpyE6JIHDKajt4YCYrMqvUh4LP5hxoUAanVsd4DIqCkbhIFwhjn_jGp60e7_lNt2kCukcSvM4l1R9-ZepZXLE'} 
-                            alt={stud.name} 
-                            referrerPolicy="no-referrer"
-                          />
-                          <div>
-                            <h4 className="text-sm font-bold text-primary">{stud.name}</h4>
-                            <p className="text-[10px] text-on-surface-variant font-semibold mt-0.5">{stud.idNumber || '#AF-2023-045'} • Kelas {stud.enrolledClassName || 'IF-4A'}</p>
-                            <p className="text-[10px] text-on-surface-variant font-semibold">{stud.enrolledCourseCode || 'IF-MOB'}</p>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4 border-t border-outline-variant/10 pt-3 text-[11px] font-semibold">
-                          <div>
-                            <span className="text-on-surface-variant block">Kumpul Tugas</span>
-                            <span className="text-primary font-bold">{studSubmissions.length} Terkirim</span>
-                          </div>
-                          <div>
-                            <span className="text-on-surface-variant block">Rata-Rata Nilai</span>
-                            <span className="text-secondary font-bold">{avgGrade === 'N/A' ? 'N/A' : `${avgGrade} / 100`}</span>
-                          </div>
-                        </div>
-
-                        {/* List of active student submissions to grade */}
-                        {studSubmissions.length > 0 && (
-                          <div className="space-y-2 pt-2 border-t border-outline-variant/10">
-                            <span className="text-[10px] font-bold text-primary block uppercase tracking-wider">Submissions:</span>
-                            {studSubmissions.map(sub => {
-                              const asg = assignments.find(a => a.id === sub.assignmentId);
-                              return (
-                                <div key={sub.id} className="p-2 bg-white rounded-lg flex justify-between items-center text-[10px] font-semibold">
-                                  <span className="truncate max-w-[150px] text-primary">{asg ? asg.title : 'Tugas'}</span>
-                                  {sub.grade !== null ? (
-                                    <span className="text-secondary font-bold">Grade: {sub.grade}</span>
-                                  ) : (
-                                    <button 
-                                      onClick={() => {
-                                        setSelectedSubmission(sub);
-                                        setGradeValue(100);
-                                        setFeedbackValue('');
-                                        setIsGradingOpen(true);
-                                      }}
-                                      className="px-2 py-1 bg-primary text-white text-[9px] font-bold rounded cursor-pointer"
-                                    >
-                                      Beri Nilai
-                                    </button>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* TAB: MATERI PERKULIAHAN */}
         {activeTab === 'materials' && (
