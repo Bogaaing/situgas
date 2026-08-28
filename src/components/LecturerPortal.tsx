@@ -4,7 +4,8 @@ import {
   Plus, Edit, Trash2, ArrowRight, BookOpen, Clock, Calendar, CheckSquare, ClipboardList,
   GraduationCap, UserPlus, FileSpreadsheet, Download, AlertTriangle, CheckCircle2, Loader2, Upload, Eye,
   Link2, ExternalLink, FileText, Menu, X, HelpCircle, ChevronLeft, ChevronRight,
-  MoreVertical, Database, Laptop, MessageSquare, TrendingUp, Monitor, ChevronDown
+  MoreVertical, Database, Laptop, MessageSquare, TrendingUp, Monitor, ChevronDown,
+  RotateCcw, Building2, Pencil, School
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { User, Assignment } from '../types';
@@ -323,6 +324,12 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
   const [masterSearch, setMasterSearch] = useState('');
   const [masterCourseFilter, setMasterCourseFilter] = useState('all');
   const [masterClassFilter, setMasterClassFilter] = useState('all');
+
+  // Master Mahasiswa Pagination & Delete Confirmation states
+  const [masterCurrentPage, setMasterCurrentPage] = useState(1);
+  const [masterItemsPerPage, setMasterItemsPerPage] = useState(10);
+  const [enrollmentToDelete, setEnrollmentToDelete] = useState<any | null>(null);
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 
   // Master Mahasiswa Modal Form states
   const [isMasterModalOpen, setIsMasterModalOpen] = useState(false);
@@ -4876,135 +4883,387 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
           </div>
         )}
 
-        {/* TAB 7: MASTER MAHASISWA */}
+        {/* TAB 7: MASTER MAHASISWA (MODERN SAAS REDESIGN) */}
         {activeTab === 'master_students' && (
-          <div className="space-y-6">
+          <div className="space-y-6 max-w-7xl mx-auto animate-in fade-in duration-200">
+            {/* 1. Header Section */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div>
-                <h1 className="text-xl md:text-2xl font-bold tracking-tight text-primary font-sans">Master Mahasiswa</h1>
-                <p className="text-xs text-on-surface-variant font-semibold mt-0.5 font-sans">Kelola data mahasiswa dan pendaftaran (enrollment) kelas mata kuliah.</p>
+                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#0F172A]">Data Mahasiswa</h1>
+                <p className="text-xs text-[#64748B] mt-1 font-normal">Kelola mahasiswa yang terdaftar pada kelas dan mata kuliah yang Anda ampu.</p>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex items-center gap-2.5 w-full sm:w-auto">
                 <button 
+                  type="button"
                   onClick={openImportExcelModal}
-                  className="bg-secondary text-primary px-4 py-2.5 rounded-xl text-xs font-bold hover:opacity-95 transition-all flex items-center gap-1.5 cursor-pointer auth-card-shadow font-sans"
+                  className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 bg-white border border-[#E8EDF3] hover:bg-[#F8FAFC] text-[#142B4A] px-4 py-2.5 rounded-xl text-xs font-semibold shadow-xs transition-all duration-200 cursor-pointer active:scale-98"
                 >
-                  <FileSpreadsheet className="w-4 h-4" /> Import Excel
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-600" /> Import Excel
                 </button>
                 <button 
+                  type="button"
                   onClick={openAddMasterModal}
-                  className="bg-primary text-white px-4 py-2.5 rounded-xl text-xs font-bold hover:opacity-95 transition-all flex items-center gap-1.5 cursor-pointer auth-card-shadow font-sans"
+                  className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 bg-[#142B4A] hover:bg-[#0E2038] text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-sm transition-all duration-200 cursor-pointer active:scale-98"
                 >
                   <Plus className="w-4 h-4" /> Tambah Mahasiswa
                 </button>
               </div>
             </div>
 
-            {/* Filters Row */}
-            <div className="bg-white rounded-2xl border border-outline-variant/30 auth-card-shadow overflow-hidden">
-              <div className="p-4 border-b border-outline-variant/15 grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant w-4 h-4" />
-                  <input 
-                    className="pl-9 pr-4 py-2 bg-gray-50 border border-outline-variant/60 rounded-xl text-xs focus:ring-2 focus:ring-primary/10 focus:border-primary outline-none transition-all w-full font-medium text-primary font-sans"
-                    placeholder="Cari berdasarkan nama atau NIM..." 
-                    type="text"
-                    value={masterSearch}
-                    onChange={(e) => setMasterSearch(e.target.value)}
-                  />
+            {/* 2. Three Summary Cards */}
+            <section className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-5">
+              {/* Card 1: TOTAL MAHASISWA */}
+              <div className="bg-white p-5 rounded-2xl border border-[#E8EDF3] shadow-xs flex items-center gap-4 group hover:shadow-sm transition-all duration-200">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                  <Users className="w-5 h-5" />
                 </div>
-
-                <select
-                  className="px-3 py-2 bg-gray-50 border border-outline-variant/60 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-primary/10 outline-none text-primary cursor-pointer font-sans"
-                  value={masterCourseFilter}
-                  onChange={(e) => setMasterCourseFilter(e.target.value)}
-                >
-                  <option value="all">Semua Mata Kuliah</option>
-                  {courses.map(c => (
-                    <option key={c.code} value={c.code}>{c.name}</option>
-                  ))}
-                </select>
-
-                <select
-                  className="px-3 py-2 bg-gray-50 border border-outline-variant/60 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-primary/10 outline-none text-primary cursor-pointer font-sans"
-                  value={masterClassFilter}
-                  onChange={(e) => setMasterClassFilter(e.target.value)}
-                >
-                  <option value="all">Semua Kelas</option>
-                  {uniqueClasses.map(c => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
+                <div>
+                  <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">TOTAL MAHASISWA</p>
+                  <h3 className="text-2xl font-bold text-[#0F172A] mt-0.5 tracking-tight">{mockStudents.length}</h3>
+                  <p className="text-[11px] text-[#64748B] font-normal">Mahasiswa terdaftar</p>
+                </div>
               </div>
 
-              {/* Table Area */}
+              {/* Card 2: MATA KULIAH */}
+              <div className="bg-white p-5 rounded-2xl border border-[#E8EDF3] shadow-xs flex items-center gap-4 group hover:shadow-sm transition-all duration-200">
+                <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                  <BookOpen className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">MATA KULIAH</p>
+                  <h3 className="text-2xl font-bold text-[#0F172A] mt-0.5 tracking-tight">{courses.length}</h3>
+                  <p className="text-[11px] text-[#64748B] font-normal">Mata kuliah diampu</p>
+                </div>
+              </div>
+
+              {/* Card 3: KELAS AKTIF */}
+              <div className="bg-white p-5 rounded-2xl border border-[#E8EDF3] shadow-xs flex items-center gap-4 group hover:shadow-sm transition-all duration-200">
+                <div className="w-12 h-12 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0">
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">KELAS AKTIF</p>
+                  <h3 className="text-2xl font-bold text-[#0F172A] mt-0.5 tracking-tight">{uniqueClasses.length}</h3>
+                  <p className="text-[11px] text-[#64748B] font-normal">Kelas aktif dikelola</p>
+                </div>
+              </div>
+            </section>
+
+            {/* 3. Search & Filter Toolbar */}
+            <div className="bg-white p-3 sm:p-3.5 rounded-2xl border border-[#E8EDF3] shadow-xs flex flex-col md:flex-row gap-3 justify-between items-stretch md:items-center">
+              {/* Search input */}
+              <div className="relative flex-1">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#94A3B8] w-4 h-4" />
+                <input 
+                  className="pl-10 pr-4 py-2 bg-[#F8FAFC] border border-[#E8EDF3] focus:border-[#142B4A]/30 focus:bg-white rounded-xl text-xs outline-none transition-all w-full font-medium text-[#0F172A] placeholder-[#94A3B8]"
+                  placeholder="Cari berdasarkan nama atau NIM..." 
+                  type="text"
+                  value={masterSearch}
+                  onChange={(e) => {
+                    setMasterSearch(e.target.value);
+                    setMasterCurrentPage(1);
+                  }}
+                />
+              </div>
+
+              {/* Dropdowns and Reset Button */}
+              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5">
+                <div className="relative w-full sm:w-auto">
+                  <select
+                    className="w-full sm:w-auto appearance-none pl-3.5 pr-8 py-2 bg-[#F8FAFC] border border-[#E8EDF3] hover:border-slate-300 focus:border-[#142B4A]/30 focus:bg-white rounded-xl text-xs font-semibold text-[#0F172A] outline-none cursor-pointer"
+                    value={masterCourseFilter}
+                    onChange={(e) => {
+                      setMasterCourseFilter(e.target.value);
+                      setMasterCurrentPage(1);
+                    }}
+                  >
+                    <option value="all">Semua Mata Kuliah</option>
+                    {courses.map(c => (
+                      <option key={c.code} value={c.code}>{c.name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#64748B] pointer-events-none" />
+                </div>
+
+                <div className="relative w-full sm:w-auto">
+                  <select
+                    className="w-full sm:w-auto appearance-none pl-3.5 pr-8 py-2 bg-[#F8FAFC] border border-[#E8EDF3] hover:border-slate-300 focus:border-[#142B4A]/30 focus:bg-white rounded-xl text-xs font-semibold text-[#0F172A] outline-none cursor-pointer"
+                    value={masterClassFilter}
+                    onChange={(e) => {
+                      setMasterClassFilter(e.target.value);
+                      setMasterCurrentPage(1);
+                    }}
+                  >
+                    <option value="all">Semua Kelas</option>
+                    {uniqueClasses.map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#64748B] pointer-events-none" />
+                </div>
+
+                {/* Reset Filter Button */}
+                {(masterSearch || masterCourseFilter !== 'all' || masterClassFilter !== 'all') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMasterSearch('');
+                      setMasterCourseFilter('all');
+                      setMasterClassFilter('all');
+                      setMasterCurrentPage(1);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-[#64748B] hover:text-[#0F172A] bg-[#F8FAFC] border border-[#E8EDF3] hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                    title="Reset Filter"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" /> Reset Filter
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* 4. Data Table */}
+            <div className="bg-white rounded-2xl border border-[#E8EDF3] shadow-xs overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
-                    <tr className="bg-gray-50 border-b border-outline-variant/15 text-primary uppercase tracking-wider font-bold font-sans">
-                      <th className="p-4">NIM</th>
-                      <th className="p-4">Nama Mahasiswa</th>
-                      <th className="p-4">Mata Kuliah</th>
-                      <th className="p-4">Kode Kelas</th>
-                      <th className="p-4">Ruang</th>
-                      <th className="p-4 text-right">Aksi</th>
+                    <tr className="border-b border-[#E8EDF3] text-[10px] font-bold text-[#64748B] uppercase tracking-wider bg-[#F8FAFC]">
+                      <th className="p-4 font-semibold">MAHASISWA</th>
+                      <th className="p-4 font-semibold">MATA KULIAH</th>
+                      <th className="p-4 text-center font-semibold w-36">KODE KELAS</th>
+                      <th className="p-4 text-center font-semibold w-28">RUANG</th>
+                      <th className="p-4 text-center font-semibold w-28">STATUS</th>
+                      <th className="p-4 text-center font-semibold w-28">AKSI</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-outline-variant/10">
+                  <tbody className="divide-y divide-[#E8EDF3]/60">
                     {filteredMasterEnrollments.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="p-8 text-center text-on-surface-variant font-semibold font-sans">
-                          Tidak ada mahasiswa yang terdaftar pada filter ini.
+                        <td colSpan={6} className="p-12 text-center">
+                          <div className="flex flex-col items-center justify-center max-w-sm mx-auto">
+                            <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-3">
+                              <Users className="w-6 h-6" />
+                            </div>
+                            <h4 className="text-sm font-bold text-[#0F172A]">Belum ada mahasiswa</h4>
+                            <p className="text-xs text-[#64748B] mt-1 text-center">
+                              Tambahkan mahasiswa secara manual atau import data melalui Excel.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={openAddMasterModal}
+                              className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 bg-[#142B4A] hover:bg-[#0E2038] text-white text-xs font-semibold rounded-xl transition-all cursor-pointer shadow-xs"
+                            >
+                              <Plus className="w-4 h-4" /> Tambah Mahasiswa
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ) : (
-                      filteredMasterEnrollments.map(enrollment => {
-                        const student = mockStudents.find(s => s.id === enrollment.studentId);
-                        const course = courses.find(c => c.code === enrollment.courseId);
-                        return (
-                          <tr key={enrollment.id} className="hover:bg-gray-55/50 transition-colors">
-                            <td className="p-4 font-mono font-semibold text-primary">{student?.nim}</td>
-                            <td className="p-4 font-bold text-primary font-sans">{student?.name}</td>
-                            <td className="p-4 font-semibold text-on-surface-variant font-sans">
-                              {course ? course.name : enrollment.courseId} ({enrollment.courseId})
-                            </td>
-                            <td className="p-4">
-                              <span className="px-2.5 py-1 bg-primary/5 text-primary text-[10px] font-bold rounded-lg font-sans">
-                                {enrollment.className}
-                              </span>
-                            </td>
-                            <td className="p-4 font-semibold text-secondary font-mono">{enrollment.roomName}</td>
-                            <td className="p-4 text-right space-x-1 whitespace-nowrap">
-                              <button 
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openEditMasterModal(enrollment);
-                                }}
-                                className="p-1.5 hover:bg-slate-100 rounded-lg text-primary transition-colors cursor-pointer inline-flex items-center"
-                                title="Edit"
-                              >
-                                <Edit className="w-4 h-4" />
-                              </button>
-                              <button 
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteMasterEnrollment(enrollment.id);
-                                }}
-                                className="p-1.5 hover:bg-red-50 text-red-500 rounded-lg transition-colors cursor-pointer inline-flex items-center"
-                                title="Hapus Enrollment"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })
+                      (() => {
+                        const startIndex = (masterCurrentPage - 1) * masterItemsPerPage;
+                        const paginatedEnrollments = filteredMasterEnrollments.slice(startIndex, startIndex + masterItemsPerPage);
+
+                        return paginatedEnrollments.map((enrollment, idx) => {
+                          const student = mockStudents.find(s => s.id === enrollment.studentId) || { name: 'Mahasiswa', nim: '241011750000' };
+                          const course = courses.find(c => c.code === enrollment.courseId);
+
+                          // Initials & Color
+                          const nameParts = (student.name || '').trim().split(/\s+/);
+                          let initials = 'MH';
+                          if (nameParts.length >= 2) {
+                            initials = (nameParts[0][0] + nameParts[1][0]).toUpperCase();
+                          } else if (nameParts.length === 1 && nameParts[0].length > 0) {
+                            initials = nameParts[0].substring(0, 2).toUpperCase();
+                          }
+
+                          const avatarColors = [
+                            'bg-teal-50 text-teal-700',
+                            'bg-purple-50 text-purple-700',
+                            'bg-amber-50 text-amber-700',
+                            'bg-rose-50 text-rose-700',
+                            'bg-blue-50 text-blue-700',
+                            'bg-emerald-50 text-emerald-700'
+                          ];
+                          const colorClass = avatarColors[(startIndex + idx) % avatarColors.length];
+
+                          return (
+                            <tr key={enrollment.id} className="hover:bg-[#F8FAFC] transition-colors">
+                              {/* Mahasiswa (Avatar initials + Name + NIM) */}
+                              <td className="p-4">
+                                <div className="flex items-center gap-3">
+                                  <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${colorClass}`}>
+                                    {initials}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="font-bold text-[#0F172A] text-xs leading-tight">{student.name}</p>
+                                    <p className="font-mono text-[11px] text-[#64748B] font-medium mt-0.5">{student.nim}</p>
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* Mata Kuliah */}
+                              <td className="p-4">
+                                <p className="font-semibold text-[#0F172A] text-xs leading-tight">{course ? course.name : enrollment.courseId}</p>
+                                <p className="text-[10px] text-[#64748B] font-semibold uppercase tracking-wider mt-0.5">{enrollment.courseId}</p>
+                              </td>
+
+                              {/* Kode Kelas */}
+                              <td className="p-4 text-center">
+                                <span className="inline-block px-2.5 py-1 bg-[#F1F5F9] text-[#1E293B] text-[11px] font-bold rounded-lg border border-[#E2E8F0]">
+                                  {enrollment.className}
+                                </span>
+                              </td>
+
+                              {/* Ruang */}
+                              <td className="p-4 text-center">
+                                <span className="font-bold text-teal-700 font-mono text-xs">
+                                  {enrollment.roomName || 'V.910'}
+                                </span>
+                              </td>
+
+                              {/* Status */}
+                              <td className="p-4 text-center">
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Aktif
+                                </span>
+                              </td>
+
+                              {/* Aksi */}
+                              <td className="p-4 text-center">
+                                <div className="inline-flex items-center justify-center gap-1.5">
+                                  <button 
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openEditMasterModal(enrollment);
+                                    }}
+                                    className="p-1.5 hover:bg-[#F8FAFC] border border-[#E8EDF3] rounded-lg text-slate-600 hover:text-[#142B4A] transition-colors cursor-pointer inline-flex items-center"
+                                    title="Edit Mahasiswa"
+                                    aria-label="Edit Mahasiswa"
+                                  >
+                                    <Pencil className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button 
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteMasterEnrollment(enrollment.id);
+                                    }}
+                                    className="p-1.5 hover:bg-red-50 border border-[#E8EDF3] rounded-lg text-red-500 hover:border-red-200 transition-colors cursor-pointer inline-flex items-center"
+                                    title="Hapus Mahasiswa"
+                                    aria-label="Hapus Mahasiswa"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        });
+                      })()
                     )}
                   </tbody>
                 </table>
               </div>
+
+              {/* 5. Pagination & Rows Per Page Footer */}
+              {filteredMasterEnrollments.length > 0 && (
+                <div className="p-4 border-t border-[#E8EDF3] flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-[#64748B]">
+                  <div>
+                    {(() => {
+                      const startIndex = (masterCurrentPage - 1) * masterItemsPerPage;
+                      const endIndex = Math.min(filteredMasterEnrollments.length, startIndex + masterItemsPerPage);
+                      return `Menampilkan ${startIndex + 1} - ${endIndex} dari ${filteredMasterEnrollments.length} mahasiswa`;
+                    })()}
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    {/* Rows per page selector */}
+                    <div className="relative">
+                      <select
+                        className="appearance-none pl-3 pr-7 py-1.5 bg-[#F8FAFC] border border-[#E8EDF3] hover:border-slate-300 rounded-lg text-xs font-semibold text-[#0F172A] outline-none cursor-pointer"
+                        value={masterItemsPerPage}
+                        onChange={(e) => {
+                          setMasterItemsPerPage(Number(e.target.value));
+                          setMasterCurrentPage(1);
+                        }}
+                      >
+                        <option value={10}>10 per halaman</option>
+                        <option value={25}>25 per halaman</option>
+                        <option value={50}>50 per halaman</option>
+                      </select>
+                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#64748B] pointer-events-none" />
+                    </div>
+
+                    {/* Pagination buttons */}
+                    {(() => {
+                      const totalPages = Math.max(1, Math.ceil(filteredMasterEnrollments.length / masterItemsPerPage));
+                      
+                      return (
+                        <div className="inline-flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={masterCurrentPage <= 1}
+                            onClick={() => setMasterCurrentPage(p => Math.max(1, p - 1))}
+                            className="w-8 h-8 rounded-lg border border-[#E8EDF3] bg-white hover:bg-[#F8FAFC] disabled:opacity-40 disabled:pointer-events-none flex items-center justify-center text-[#0F172A] font-semibold cursor-pointer transition-colors"
+                            aria-label="Halaman Sebelumnya"
+                          >
+                            <ChevronLeft className="w-4 h-4" />
+                          </button>
+
+                          {/* Dynamic page numbers */}
+                          {Array.from({ length: Math.min(totalPages, 5) }).map((_, pIdx) => {
+                            let pageNum = pIdx + 1;
+                            if (totalPages > 5 && masterCurrentPage > 3) {
+                              pageNum = masterCurrentPage - 2 + pIdx;
+                              if (pageNum > totalPages) pageNum = totalPages - (4 - pIdx);
+                            }
+                            if (pageNum < 1) pageNum = 1;
+
+                            const isActive = pageNum === masterCurrentPage;
+                            return (
+                              <button
+                                key={pageNum}
+                                type="button"
+                                onClick={() => setMasterCurrentPage(pageNum)}
+                                className={`w-8 h-8 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                                  isActive
+                                    ? 'bg-[#142B4A] text-white shadow-xs'
+                                    : 'border border-[#E8EDF3] bg-white hover:bg-[#F8FAFC] text-[#0F172A]'
+                                }`}
+                              >
+                                {pageNum}
+                              </button>
+                            );
+                          })}
+
+                          {totalPages > 5 && masterCurrentPage < totalPages - 2 && (
+                            <>
+                              <span className="text-[#94A3B8] px-0.5">...</span>
+                              <button
+                                type="button"
+                                onClick={() => setMasterCurrentPage(totalPages)}
+                                className="w-8 h-8 rounded-lg border border-[#E8EDF3] bg-white hover:bg-[#F8FAFC] text-[#0F172A] text-xs font-bold cursor-pointer"
+                              >
+                                {totalPages}
+                              </button>
+                            </>
+                          )}
+
+                          <button
+                            type="button"
+                            disabled={masterCurrentPage >= totalPages}
+                            onClick={() => setMasterCurrentPage(p => Math.min(totalPages, p + 1))}
+                            className="w-8 h-8 rounded-lg border border-[#E8EDF3] bg-white hover:bg-[#F8FAFC] disabled:opacity-40 disabled:pointer-events-none flex items-center justify-center text-[#0F172A] font-semibold cursor-pointer transition-colors"
+                            aria-label="Halaman Selanjutnya"
+                          >
+                            <ChevronRight className="w-4 h-4" />
+                          </button>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -5558,30 +5817,17 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
 
       {/* CONFIRMATION DELETE ENROLLMENT DIALOG */}
       {selectedEnrollmentToDelete && (
-        <div className="fixed inset-0 bg-primary/20 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-outline-variant/10 animate-in fade-in zoom-in-95 duration-200">
-            <h3 className="text-base font-bold text-primary mb-2 font-sans">
-              Hapus Mahasiswa dari Mata Kuliah?
+        <div className="fixed inset-0 bg-[#0F172A]/40 backdrop-blur-xs z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-xl border border-[#E8EDF3] animate-in fade-in zoom-in-95 duration-200">
+            <h3 className="text-base font-bold text-[#0F172A] mb-2">
+              Hapus Mahasiswa?
             </h3>
-            <p className="text-xs text-on-surface-variant font-medium mb-2 font-sans leading-relaxed">
-              Apakah Anda yakin ingin menghapus <span className="font-bold text-primary">{
-                (() => {
-                  const s = mockStudents.find(student => student.id === selectedEnrollmentToDelete.studentId);
-                  return s ? s.name : 'Mahasiswa';
-                })()
-              }</span> dari mata kuliah <span className="font-bold text-primary">{
-                (() => {
-                  const c = courses.find(course => course.code === selectedEnrollmentToDelete.courseId);
-                  return c ? c.name : selectedEnrollmentToDelete.courseId;
-                })()
-              }</span>?
-            </p>
-            <p className="text-[10px] text-on-surface-variant/85 font-medium mb-4 font-sans leading-relaxed">
-              Akun login dan profil mahasiswa tetap tersedia dan hanya akan dihapus dari mata kuliah ini.
+            <p className="text-xs text-[#64748B] font-normal mb-4 leading-relaxed">
+              Data mahasiswa yang dihapus tidak dapat dikembalikan.
             </p>
 
             {enrollmentDeleteError && (
-              <div className="p-2.5 bg-red-50 text-red-600 rounded-xl text-[10px] font-bold border border-red-100 font-sans mb-4">
+              <div className="p-2.5 bg-red-50 text-red-600 rounded-xl text-[11px] font-semibold border border-red-100 mb-4">
                 ⚠️ {enrollmentDeleteError}
               </div>
             )}
@@ -5590,18 +5836,18 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
               <button 
                 type="button" 
                 onClick={() => setSelectedEnrollmentToDelete(null)}
-                className="flex-1 py-2.5 border border-outline-variant/60 text-on-surface-variant font-bold text-xs rounded-xl hover:bg-slate-50 transition-colors cursor-pointer font-sans"
+                className="flex-1 py-2.5 border border-[#E8EDF3] text-[#0F172A] font-semibold text-xs rounded-xl hover:bg-[#F8FAFC] transition-colors cursor-pointer"
                 disabled={isEnrollmentDeleting}
               >
                 Batal
               </button>
               <button 
-                type="button"
+                type="button" 
                 onClick={handleConfirmDeleteEnrollment}
-                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl transition-all cursor-pointer font-sans disabled:opacity-50"
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-semibold text-xs rounded-xl transition-all cursor-pointer disabled:opacity-50"
                 disabled={isEnrollmentDeleting}
               >
-                {isEnrollmentDeleting ? 'Menghapus...' : 'Hapus'}
+                {isEnrollmentDeleting ? 'Menghapus...' : 'Hapus Mahasiswa'}
               </button>
             </div>
           </div>
