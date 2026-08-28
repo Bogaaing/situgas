@@ -2236,21 +2236,21 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
 
       {/* SideNavBar (Desktop Permanent Modern Academic SaaS Sidebar) */}
       <aside 
-        className={`hidden md:flex flex-col fixed left-0 top-0 bottom-0 h-screen bg-white border-r border-[#E9EEF5] z-40 select-none transition-all duration-300 ease-in-out ${
+        className={`hidden md:flex flex-col fixed left-0 top-0 bottom-0 h-screen bg-white border-r border-[#E8EDF3] z-40 select-none transition-all duration-300 ease-in-out ${
           isSidebarCollapsed ? 'w-[72px]' : 'w-[280px]'
         }`}
       >
         {/* BRAND Header */}
-        <div className={`h-16 border-b border-[#E9EEF5] flex items-center shrink-0 ${
+        <div className={`h-16 border-b border-[#E8EDF3] flex items-center shrink-0 ${
           isSidebarCollapsed ? 'justify-center px-2 relative' : 'justify-between px-5'
         }`}>
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-[#14B8A6] flex items-center justify-center text-white shrink-0 shadow-sm shadow-[#14B8A6]/20">
-              <GraduationCap className="w-5 h-5" />
+            <div className="w-10 h-10 rounded-full bg-[#142B4A] flex items-center justify-center text-white shrink-0 shadow-md shadow-[#142B4A]/15">
+              <GraduationCap className="w-5 h-5 text-white" />
             </div>
             {!isSidebarCollapsed && (
               <div className="min-w-0 animate-in fade-in duration-200">
-                <h1 className="text-sm font-bold text-[#0F172A] leading-none tracking-tight">SI Tugas</h1>
+                <h1 className="text-sm font-bold text-[#142B4A] leading-none tracking-tight">SI Tugas</h1>
                 <p className="text-[9px] font-semibold text-[#64748B] tracking-wider uppercase mt-1">SISTEM MANAJEMEN TUGAS</p>
               </div>
             )}
@@ -2260,8 +2260,8 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
           <button
             type="button"
             onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-            className={`p-1.5 text-slate-400 hover:text-[#0F172A] hover:bg-slate-100 rounded-lg transition-colors cursor-pointer ${
-              isSidebarCollapsed ? 'absolute -right-3 top-5 bg-white border border-[#E9EEF5] shadow-xs rounded-full p-1 z-50 text-slate-600' : ''
+            className={`p-1.5 text-slate-400 hover:text-[#142B4A] hover:bg-[#F5F7FA] rounded-lg transition-colors cursor-pointer ${
+              isSidebarCollapsed ? 'absolute -right-3 top-5 bg-white border border-[#E8EDF3] shadow-xs rounded-full p-1 z-50 text-slate-600' : ''
             }`}
             title={isSidebarCollapsed ? "Perluas Sidebar" : "Perkecil Sidebar"}
             aria-label={isSidebarCollapsed ? "Perluas Sidebar" : "Perkecil Sidebar"}
@@ -2279,31 +2279,31 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                 UTAMA
               </div>
             ) : (
-              <div className="w-8 mx-auto border-t border-[#E9EEF5] my-2" />
+              <div className="w-8 mx-auto border-t border-[#E8EDF3] my-2" />
             )}
             <div className="space-y-1">
               <button 
                 type="button"
-                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-150 cursor-pointer ${
+                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-200 cursor-pointer ${
                   isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5 gap-3'
                 } ${
                   activeTab === 'overview' 
-                    ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
-                    : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                    ? 'bg-[#EEF3FA] text-[#142B4A] font-semibold' 
+                    : 'text-[#64748B] hover:bg-[#F5F7FA] hover:text-[#142B4A] font-medium'
                 }`}
                 onClick={() => setActiveTab('overview')}
               >
                 {activeTab === 'overview' && (
-                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#142B4A] rounded-r-full" />
                 )}
-                <LayoutDashboard className={`w-[18px] h-[18px] shrink-0 transition-colors duration-150 ${
-                  activeTab === 'overview' ? 'text-[#14B8A6]' : 'text-[#64748B] group-hover:text-[#14B8A6]'
+                <LayoutDashboard className={`w-[18px] h-[18px] shrink-0 transition-colors duration-200 ${
+                  activeTab === 'overview' ? 'text-[#142B4A]' : 'text-[#64748B] group-hover:text-[#142B4A]'
                 }`} />
                 {!isSidebarCollapsed && <span className="text-sm truncate leading-none">Dashboard</span>}
                 {isSidebarCollapsed && (
-                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#0F172A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#142B4A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
                     Dashboard
-                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#0F172A]" />
+                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#142B4A]" />
                   </div>
                 )}
               </button>
@@ -2317,43 +2317,43 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                 PERKULIAHAN
               </div>
             ) : (
-              <div className="w-8 mx-auto border-t border-[#E9EEF5] my-2" />
+              <div className="w-8 mx-auto border-t border-[#E8EDF3] my-2" />
             )}
             <div className="space-y-1">
               <button 
                 type="button"
-                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-150 cursor-pointer ${
+                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-200 cursor-pointer ${
                   isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5 gap-3'
                 } ${
                   activeTab === 'courses' 
-                    ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
-                    : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                    ? 'bg-[#EEF3FA] text-[#142B4A] font-semibold' 
+                    : 'text-[#64748B] hover:bg-[#F5F7FA] hover:text-[#142B4A] font-medium'
                 }`}
                 onClick={() => setActiveTab('courses')}
               >
                 {activeTab === 'courses' && (
-                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#142B4A] rounded-r-full" />
                 )}
-                <BookOpen className={`w-[18px] h-[18px] shrink-0 transition-colors duration-150 ${
-                  activeTab === 'courses' ? 'text-[#14B8A6]' : 'text-[#64748B] group-hover:text-[#14B8A6]'
+                <BookOpen className={`w-[18px] h-[18px] shrink-0 transition-colors duration-200 ${
+                  activeTab === 'courses' ? 'text-[#142B4A]' : 'text-[#64748B] group-hover:text-[#142B4A]'
                 }`} />
                 {!isSidebarCollapsed && <span className="text-sm truncate leading-none">Mata Kuliah</span>}
                 {isSidebarCollapsed && (
-                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#0F172A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#142B4A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
                     Mata Kuliah
-                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#0F172A]" />
+                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#142B4A]" />
                   </div>
                 )}
               </button>
 
               <button 
                 type="button"
-                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-150 cursor-pointer ${
+                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-200 cursor-pointer ${
                   isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5 gap-3'
                 } ${
                   activeTab === 'materials' 
-                    ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
-                    : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                    ? 'bg-[#EEF3FA] text-[#142B4A] font-semibold' 
+                    : 'text-[#64748B] hover:bg-[#F5F7FA] hover:text-[#142B4A] font-medium'
                 }`}
                 onClick={() => {
                   setActiveTab('materials');
@@ -2361,42 +2361,42 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                 }}
               >
                 {activeTab === 'materials' && (
-                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#142B4A] rounded-r-full" />
                 )}
-                <FileSpreadsheet className={`w-[18px] h-[18px] shrink-0 transition-colors duration-150 ${
-                  activeTab === 'materials' ? 'text-[#14B8A6]' : 'text-[#64748B] group-hover:text-[#14B8A6]'
+                <FileSpreadsheet className={`w-[18px] h-[18px] shrink-0 transition-colors duration-200 ${
+                  activeTab === 'materials' ? 'text-[#142B4A]' : 'text-[#64748B] group-hover:text-[#142B4A]'
                 }`} />
                 {!isSidebarCollapsed && <span className="text-sm truncate leading-none">Materi Perkuliahan</span>}
                 {isSidebarCollapsed && (
-                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#0F172A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#142B4A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
                     Materi Perkuliahan
-                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#0F172A]" />
+                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#142B4A]" />
                   </div>
                 )}
               </button>
 
               <button 
                 type="button"
-                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-150 cursor-pointer ${
+                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-200 cursor-pointer ${
                   isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5 gap-3'
                 } ${
                   activeTab === 'master_students' 
-                    ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
-                    : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                    ? 'bg-[#EEF3FA] text-[#142B4A] font-semibold' 
+                    : 'text-[#64748B] hover:bg-[#F5F7FA] hover:text-[#142B4A] font-medium'
                 }`}
                 onClick={() => setActiveTab('master_students')}
               >
                 {activeTab === 'master_students' && (
-                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#142B4A] rounded-r-full" />
                 )}
-                <GraduationCap className={`w-[18px] h-[18px] shrink-0 transition-colors duration-150 ${
-                  activeTab === 'master_students' ? 'text-[#14B8A6]' : 'text-[#64748B] group-hover:text-[#14B8A6]'
+                <GraduationCap className={`w-[18px] h-[18px] shrink-0 transition-colors duration-200 ${
+                  activeTab === 'master_students' ? 'text-[#142B4A]' : 'text-[#64748B] group-hover:text-[#142B4A]'
                 }`} />
                 {!isSidebarCollapsed && <span className="text-sm truncate leading-none">Data Mahasiswa</span>}
                 {isSidebarCollapsed && (
-                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#0F172A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#142B4A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
                     Data Mahasiswa
-                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#0F172A]" />
+                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#142B4A]" />
                   </div>
                 )}
               </button>
@@ -2410,31 +2410,31 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                 TUGAS
               </div>
             ) : (
-              <div className="w-8 mx-auto border-t border-[#E9EEF5] my-2" />
+              <div className="w-8 mx-auto border-t border-[#E8EDF3] my-2" />
             )}
             <div className="space-y-1">
               <button 
                 type="button"
-                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-150 cursor-pointer ${
+                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-200 cursor-pointer ${
                   isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5 gap-3'
                 } ${
                   activeTab === 'assignments' 
-                    ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
-                    : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                    ? 'bg-[#EEF3FA] text-[#142B4A] font-semibold' 
+                    : 'text-[#64748B] hover:bg-[#F5F7FA] hover:text-[#142B4A] font-medium'
                 }`}
                 onClick={() => setActiveTab('assignments')}
               >
                 {activeTab === 'assignments' && (
-                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#142B4A] rounded-r-full" />
                 )}
-                <CheckSquare className={`w-[18px] h-[18px] shrink-0 transition-colors duration-150 ${
-                  activeTab === 'assignments' ? 'text-[#14B8A6]' : 'text-[#64748B] group-hover:text-[#14B8A6]'
+                <CheckSquare className={`w-[18px] h-[18px] shrink-0 transition-colors duration-200 ${
+                  activeTab === 'assignments' ? 'text-[#142B4A]' : 'text-[#64748B] group-hover:text-[#142B4A]'
                 }`} />
                 {!isSidebarCollapsed && <span className="text-sm truncate leading-none">Tugas</span>}
                 {isSidebarCollapsed && (
-                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#0F172A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#142B4A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
                     Tugas
-                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#0F172A]" />
+                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#142B4A]" />
                   </div>
                 )}
               </button>
@@ -2448,31 +2448,31 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                 LAPORAN
               </div>
             ) : (
-              <div className="w-8 mx-auto border-t border-[#E9EEF5] my-2" />
+              <div className="w-8 mx-auto border-t border-[#E8EDF3] my-2" />
             )}
             <div className="space-y-1">
               <button 
                 type="button"
-                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-150 cursor-pointer ${
+                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-200 cursor-pointer ${
                   isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5 gap-3'
                 } ${
                   activeTab === 'reports' 
-                    ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
-                    : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                    ? 'bg-[#EEF3FA] text-[#142B4A] font-semibold' 
+                    : 'text-[#64748B] hover:bg-[#F5F7FA] hover:text-[#142B4A] font-medium'
                 }`}
                 onClick={() => setActiveTab('reports')}
               >
                 {activeTab === 'reports' && (
-                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#142B4A] rounded-r-full" />
                 )}
-                <BarChart3 className={`w-[18px] h-[18px] shrink-0 transition-colors duration-150 ${
-                  activeTab === 'reports' ? 'text-[#14B8A6]' : 'text-[#64748B] group-hover:text-[#14B8A6]'
+                <BarChart3 className={`w-[18px] h-[18px] shrink-0 transition-colors duration-200 ${
+                  activeTab === 'reports' ? 'text-[#142B4A]' : 'text-[#64748B] group-hover:text-[#142B4A]'
                 }`} />
                 {!isSidebarCollapsed && <span className="text-sm truncate leading-none">Statistik & Laporan</span>}
                 {isSidebarCollapsed && (
-                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#0F172A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#142B4A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
                     Statistik & Laporan
-                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#0F172A]" />
+                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#142B4A]" />
                   </div>
                 )}
               </button>
@@ -2481,7 +2481,7 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
 
           {/* SECTION: SYSTEM */}
           <div className="pt-2">
-            <div className="w-full border-t border-[#E9EEF5] mb-4" />
+            <div className="w-full border-t border-[#E8EDF3] mb-4" />
             {!isSidebarCollapsed && (
               <div className="px-3 mb-2 text-[11px] font-semibold tracking-wider text-[#64748B] uppercase">
                 SYSTEM
@@ -2490,34 +2490,34 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
             <div className="space-y-1">
               <button 
                 type="button"
-                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-150 cursor-pointer text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium ${
+                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-200 cursor-pointer text-[#64748B] hover:bg-[#F5F7FA] hover:text-[#142B4A] font-medium ${
                   isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5 gap-3'
                 }`}
                 onClick={() => setIsSettingsModalOpen(true)}
               >
-                <Settings className="w-[18px] h-[18px] shrink-0 text-[#64748B] group-hover:text-[#14B8A6] transition-colors duration-150" />
+                <Settings className="w-[18px] h-[18px] shrink-0 text-[#64748B] group-hover:text-[#142B4A] transition-colors duration-200" />
                 {!isSidebarCollapsed && <span className="text-sm truncate leading-none">Pengaturan</span>}
                 {isSidebarCollapsed && (
-                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#0F172A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#142B4A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
                     Pengaturan
-                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#0F172A]" />
+                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#142B4A]" />
                   </div>
                 )}
               </button>
 
               <button 
                 type="button"
-                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-150 cursor-pointer text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium ${
+                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-200 cursor-pointer text-[#64748B] hover:bg-[#F5F7FA] hover:text-[#142B4A] font-medium ${
                   isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5 gap-3'
                 }`}
                 onClick={() => setIsHelpModalOpen(true)}
               >
-                <HelpCircle className="w-[18px] h-[18px] shrink-0 text-[#64748B] group-hover:text-[#14B8A6] transition-colors duration-150" />
+                <HelpCircle className="w-[18px] h-[18px] shrink-0 text-[#64748B] group-hover:text-[#142B4A] transition-colors duration-200" />
                 {!isSidebarCollapsed && <span className="text-sm truncate leading-none">Bantuan</span>}
                 {isSidebarCollapsed && (
-                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#0F172A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#142B4A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
                     Bantuan
-                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#0F172A]" />
+                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#142B4A]" />
                   </div>
                 )}
               </button>
@@ -2543,13 +2543,13 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
           isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}>
           {/* Drawer Header branding & close button */}
-          <div className="h-16 px-5 border-b border-[#E9EEF5] flex items-center justify-between shrink-0">
+          <div className="h-16 px-5 border-b border-[#E8EDF3] flex items-center justify-between shrink-0">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-[#14B8A6] flex items-center justify-center text-white shadow-sm shadow-[#14B8A6]/20">
-                <GraduationCap className="w-5 h-5" />
+              <div className="w-10 h-10 rounded-full bg-[#142B4A] flex items-center justify-center text-white shadow-md shadow-[#142B4A]/15">
+                <GraduationCap className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h2 className="text-sm font-bold text-[#0F172A] leading-none tracking-tight">SI Tugas</h2>
+                <h2 className="text-sm font-bold text-[#142B4A] leading-none tracking-tight">SI Tugas</h2>
                 <p className="text-[9px] font-semibold text-[#64748B] tracking-wider uppercase mt-1">SISTEM MANAJEMEN TUGAS</p>
               </div>
             </div>
@@ -2557,7 +2557,7 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
             {/* Close Button */}
             <button 
               onClick={() => setIsMobileSidebarOpen(false)}
-              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+              className="p-1.5 text-slate-400 hover:text-[#142B4A] hover:bg-[#F5F7FA] rounded-lg transition-colors cursor-pointer"
               aria-label="Tutup menu"
             >
               <X className="w-5 h-5" />
@@ -2573,10 +2573,10 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
               <div className="space-y-1">
                 <button 
                   type="button"
-                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-150 cursor-pointer ${
+                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-200 cursor-pointer ${
                     activeTab === 'overview' 
-                      ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
-                      : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                      ? 'bg-[#EEF3FA] text-[#142B4A] font-semibold' 
+                      : 'text-[#64748B] hover:bg-[#F5F7FA] hover:text-[#142B4A] font-medium'
                   }`}
                   onClick={() => {
                     setActiveTab('overview');
@@ -2584,9 +2584,9 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                   }}
                 >
                   {activeTab === 'overview' && (
-                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#142B4A] rounded-r-full" />
                   )}
-                  <LayoutDashboard className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'overview' ? 'text-[#14B8A6]' : 'text-[#64748B]'}`} />
+                  <LayoutDashboard className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'overview' ? 'text-[#142B4A]' : 'text-[#64748B]'}`} />
                   <span className="text-sm truncate leading-none">Dashboard</span>
                 </button>
               </div>
@@ -2600,10 +2600,10 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
               <div className="space-y-1">
                 <button 
                   type="button"
-                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-150 cursor-pointer ${
+                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-200 cursor-pointer ${
                     activeTab === 'courses' 
-                      ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
-                      : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                      ? 'bg-[#EEF3FA] text-[#142B4A] font-semibold' 
+                      : 'text-[#64748B] hover:bg-[#F5F7FA] hover:text-[#142B4A] font-medium'
                   }`}
                   onClick={() => {
                     setActiveTab('courses');
@@ -2611,18 +2611,18 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                   }}
                 >
                   {activeTab === 'courses' && (
-                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#142B4A] rounded-r-full" />
                   )}
-                  <BookOpen className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'courses' ? 'text-[#14B8A6]' : 'text-[#64748B]'}`} />
+                  <BookOpen className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'courses' ? 'text-[#142B4A]' : 'text-[#64748B]'}`} />
                   <span className="text-sm truncate leading-none">Mata Kuliah</span>
                 </button>
 
                 <button 
                   type="button"
-                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-150 cursor-pointer ${
+                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-200 cursor-pointer ${
                     activeTab === 'materials' 
-                      ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
-                      : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                      ? 'bg-[#EEF3FA] text-[#142B4A] font-semibold' 
+                      : 'text-[#64748B] hover:bg-[#F5F7FA] hover:text-[#142B4A] font-medium'
                   }`}
                   onClick={() => {
                     setActiveTab('materials');
@@ -2631,18 +2631,18 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                   }}
                 >
                   {activeTab === 'materials' && (
-                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#142B4A] rounded-r-full" />
                   )}
-                  <FileSpreadsheet className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'materials' ? 'text-[#14B8A6]' : 'text-[#64748B]'}`} />
+                  <FileSpreadsheet className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'materials' ? 'text-[#142B4A]' : 'text-[#64748B]'}`} />
                   <span className="text-sm truncate leading-none">Materi Perkuliahan</span>
                 </button>
 
                 <button 
                   type="button"
-                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-150 cursor-pointer ${
+                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-200 cursor-pointer ${
                     activeTab === 'master_students' 
-                      ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
-                      : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                      ? 'bg-[#EEF3FA] text-[#142B4A] font-semibold' 
+                      : 'text-[#64748B] hover:bg-[#F5F7FA] hover:text-[#142B4A] font-medium'
                   }`}
                   onClick={() => {
                     setActiveTab('master_students');
@@ -2650,9 +2650,9 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                   }}
                 >
                   {activeTab === 'master_students' && (
-                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#142B4A] rounded-r-full" />
                   )}
-                  <GraduationCap className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'master_students' ? 'text-[#14B8A6]' : 'text-[#64748B]'}`} />
+                  <GraduationCap className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'master_students' ? 'text-[#142B4A]' : 'text-[#64748B]'}`} />
                   <span className="text-sm truncate leading-none">Data Mahasiswa</span>
                 </button>
               </div>
@@ -2666,10 +2666,10 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
               <div className="space-y-1">
                 <button 
                   type="button"
-                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-150 cursor-pointer ${
+                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-200 cursor-pointer ${
                     activeTab === 'assignments' 
-                      ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
-                      : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                      ? 'bg-[#EEF3FA] text-[#142B4A] font-semibold' 
+                      : 'text-[#64748B] hover:bg-[#F5F7FA] hover:text-[#142B4A] font-medium'
                   }`}
                   onClick={() => {
                     setActiveTab('assignments');
@@ -2677,9 +2677,9 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                   }}
                 >
                   {activeTab === 'assignments' && (
-                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#142B4A] rounded-r-full" />
                   )}
-                  <CheckSquare className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'assignments' ? 'text-[#14B8A6]' : 'text-[#64748B]'}`} />
+                  <CheckSquare className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'assignments' ? 'text-[#142B4A]' : 'text-[#64748B]'}`} />
                   <span className="text-sm truncate leading-none">Tugas</span>
                 </button>
               </div>
@@ -2693,10 +2693,10 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
               <div className="space-y-1">
                 <button 
                   type="button"
-                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-150 cursor-pointer ${
+                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-200 cursor-pointer ${
                     activeTab === 'reports' 
-                      ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
-                      : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                      ? 'bg-[#EEF3FA] text-[#142B4A] font-semibold' 
+                      : 'text-[#64748B] hover:bg-[#F5F7FA] hover:text-[#142B4A] font-medium'
                   }`}
                   onClick={() => {
                     setActiveTab('reports');
@@ -2704,9 +2704,9 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                   }}
                 >
                   {activeTab === 'reports' && (
-                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#142B4A] rounded-r-full" />
                   )}
-                  <BarChart3 className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'reports' ? 'text-[#14B8A6]' : 'text-[#64748B]'}`} />
+                  <BarChart3 className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'reports' ? 'text-[#142B4A]' : 'text-[#64748B]'}`} />
                   <span className="text-sm truncate leading-none">Statistik & Laporan</span>
                 </button>
               </div>
@@ -2714,14 +2714,14 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
 
             {/* SYSTEM */}
             <div className="pt-2">
-              <div className="w-full border-t border-[#E9EEF5] mb-4" />
+              <div className="w-full border-t border-[#E8EDF3] mb-4" />
               <div className="px-3 mb-2 text-[11px] font-semibold tracking-wider text-[#64748B] uppercase">
                 SYSTEM
               </div>
               <div className="space-y-1">
                 <button 
                   type="button"
-                  className="w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium transition-all duration-150 cursor-pointer"
+                  className="w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] text-[#64748B] hover:bg-[#F5F7FA] hover:text-[#142B4A] font-medium transition-all duration-200 cursor-pointer"
                   onClick={() => {
                     setIsMobileSidebarOpen(false);
                     setIsSettingsModalOpen(true);
@@ -2733,7 +2733,7 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
 
                 <button 
                   type="button"
-                  className="w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium transition-all duration-150 cursor-pointer"
+                  className="w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] text-[#64748B] hover:bg-[#F5F7FA] hover:text-[#142B4A] font-medium transition-all duration-200 cursor-pointer"
                   onClick={() => {
                     setIsMobileSidebarOpen(false);
                     setIsHelpModalOpen(true);
