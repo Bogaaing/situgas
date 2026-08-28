@@ -2250,7 +2250,7 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
             </div>
             {!isSidebarCollapsed && (
               <div className="min-w-0 animate-in fade-in duration-200">
-                <h1 className="text-sm font-bold text-[#0F172A] leading-none tracking-tight">SiTugas Dosen</h1>
+                <h1 className="text-sm font-bold text-[#0F172A] leading-none tracking-tight">SI Tugas</h1>
                 <p className="text-[9px] font-semibold text-[#64748B] tracking-wider uppercase mt-1">SISTEM MANAJEMEN TUGAS</p>
               </div>
             )}
@@ -2549,7 +2549,7 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                 <GraduationCap className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-sm font-bold text-[#0F172A] leading-none tracking-tight">SiTugas Dosen</h2>
+                <h2 className="text-sm font-bold text-[#0F172A] leading-none tracking-tight">SI Tugas</h2>
                 <p className="text-[9px] font-semibold text-[#64748B] tracking-wider uppercase mt-1">SISTEM MANAJEMEN TUGAS</p>
               </div>
             </div>
