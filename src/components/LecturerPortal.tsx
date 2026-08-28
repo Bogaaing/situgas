@@ -1143,15 +1143,35 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
       const normalizedGrade = rawGrade;
       const normalizedFeedback = localFeedbackValue.trim();
 
-      // Use the robust proxy backend API to perform the update on Supabase.
-      // This completely avoids any browser CORS/preflight or adblock blocks for cross-origin PATCH requests.
-      await apiRequest<any>(`/api/submissions/${submissionId}/grade`, {
-        method: 'PATCH',
-        body: JSON.stringify({
+      // Update grade directly on Supabase
+      const { error: gradeErr } = await supabase
+        .from('submissions')
+        .update({
           grade: normalizedGrade,
           feedback: normalizedFeedback,
-        }),
-      });
+          graded_at: new Date().toISOString(),
+        })
+        .eq('id', submissionId);
+
+      if (gradeErr) {
+        console.warn('Supabase direct grading error, attempting API proxy:', gradeErr);
+        await apiRequest<any>(`/api/submissions/${submissionId}/grade`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            grade: normalizedGrade,
+            feedback: normalizedFeedback,
+          }),
+        });
+      } else {
+        // Also quietly notify local API proxy if running in local dev
+        apiRequest<any>(`/api/submissions/${submissionId}/grade`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            grade: normalizedGrade,
+            feedback: normalizedFeedback,
+          }),
+        }).catch(() => {});
+      }
 
       setGradedStudentInfo({
         name: selectedSubmissionForDetail.name,

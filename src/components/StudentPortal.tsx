@@ -486,16 +486,76 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
           }
         }
 
-        // Submit assignment via robust backend API proxy (handles Supabase and DB securely)
-        await apiRequest<any>('/api/submissions', {
-          method: 'POST',
-          body: JSON.stringify({
-            assignmentId: selectedAssignment.id,
-            submittedFile: finalFilePath,
-            submittedLink: activeSubmitTab === 'link' ? submissionLink : null,
-            submittedNote: submissionNote || null,
-          }),
-        });
+        // 1. Verify if assignment is closed in Supabase
+        const { data: asgData } = await supabase
+          .from('assignments')
+          .select('id, title, status')
+          .eq('id', selectedAssignment.id)
+          .maybeSingle();
+
+        if (asgData && asgData.status === 'closed') {
+          setClosedModalTaskTitle(asgData.title || selectedAssignment.title || 'Tugas');
+          setShowClosedModal(true);
+          return;
+        }
+
+        // 2. Check if submission already exists in Supabase
+        const { data: existingSub } = await supabase
+          .from('submissions')
+          .select('id')
+          .eq('assignment_id', selectedAssignment.id)
+          .eq('student_id', uid)
+          .maybeSingle();
+
+        let supabaseErr = null;
+        if (existingSub) {
+          const { error: updateErr } = await supabase
+            .from('submissions')
+            .update({
+              submitted_at: new Date().toISOString(),
+              file_path: finalFilePath,
+              submitted_link: activeSubmitTab === 'link' ? submissionLink : null,
+              submitted_note: submissionNote || null,
+            })
+            .eq('id', existingSub.id);
+          supabaseErr = updateErr;
+        } else {
+          const { error: insertErr } = await supabase
+            .from('submissions')
+            .insert({
+              assignment_id: selectedAssignment.id,
+              student_id: uid,
+              submitted_at: new Date().toISOString(),
+              file_path: finalFilePath,
+              submitted_link: activeSubmitTab === 'link' ? submissionLink : null,
+              submitted_note: submissionNote || null,
+            });
+          supabaseErr = insertErr;
+        }
+
+        if (supabaseErr) {
+          console.warn('Supabase direct submission failed, attempting backend API proxy:', supabaseErr);
+          await apiRequest<any>('/api/submissions', {
+            method: 'POST',
+            body: JSON.stringify({
+              assignmentId: selectedAssignment.id,
+              submittedFile: finalFilePath,
+              submittedLink: activeSubmitTab === 'link' ? submissionLink : null,
+              submittedNote: submissionNote || null,
+            }),
+          });
+        } else {
+          // Also sync to local backend if running in dev environment (ignore error on static web hosting)
+          apiRequest<any>('/api/submissions', {
+            method: 'POST',
+            body: JSON.stringify({
+              assignmentId: selectedAssignment.id,
+              submittedFile: finalFilePath,
+              submittedLink: activeSubmitTab === 'link' ? submissionLink : null,
+              submittedNote: submissionNote || null,
+            }),
+          }).catch(() => {});
+        }
 
         // Refresh database state
         await fetchData();
