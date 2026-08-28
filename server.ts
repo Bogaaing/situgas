@@ -9,7 +9,15 @@ import { createClient } from "@supabase/supabase-js";
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
 const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || '';
+
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const supabaseAdmin = supabaseServiceRoleKey ? createClient(supabaseUrl, supabaseServiceRoleKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false
+  }
+}) : null;
 
 async function startServer() {
   const app = express();
@@ -55,6 +63,174 @@ async function startServer() {
     } catch (err: any) {
       console.error("Sync user profile failed:", err);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Admin endpoint: Create lecturer securely
+  app.post("/api/admin/create-lecturer", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const callerUid = req.user!.uid;
+      const authHeader = req.headers.authorization;
+
+      if (!supabaseUrl || !supabaseAnonKey || !authHeader) {
+        return res.status(500).json({ error: "Supabase configuration missing" });
+      }
+
+      // Initialize scoped user Supabase client with caller's token for RLS
+      const userSupabase = createClient(supabaseUrl, supabaseAnonKey, {
+        global: {
+          headers: {
+            Authorization: authHeader,
+          },
+        },
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+        }
+      });
+
+      // Verify caller is admin using scoped userSupabase
+      const { data: callerProfile, error: callerErr } = await userSupabase
+        .from("profiles")
+        .select("*")
+        .eq("id", callerUid)
+        .maybeSingle();
+
+      if (callerErr || !callerProfile || callerProfile.role !== "admin") {
+        console.error("Admin verification failed for uid:", callerUid, "error:", callerErr, "profile:", callerProfile);
+        return res.status(403).json({ error: "Forbidden: Hanya Administrator yang dapat mendaftarkan dosen baru." });
+      }
+
+      const { name, email, password } = req.body;
+      const trimmedName = String(name || "").trim();
+      const trimmedEmail = String(email || "").trim().toLowerCase();
+      const rawPassword = String(password || "");
+
+      if (!trimmedName || !trimmedEmail || !rawPassword) {
+        return res.status(400).json({ error: "Nama, email, dan password wajib diisi." });
+      }
+      if (rawPassword.length < 6) {
+        return res.status(400).json({ error: "Password awal minimal 6 karakter." });
+      }
+
+      // Check if user already exists
+      const { data: existingUser } = await userSupabase
+        .from("profiles")
+        .select("id, email, role")
+        .eq("email", trimmedEmail)
+        .maybeSingle();
+
+      if (existingUser) {
+        return res.status(400).json({ error: `Email ${trimmedEmail} sudah terdaftar dengan role ${existingUser.role}.` });
+      }
+
+      // Create auth user
+      let newUserId: string | null = null;
+
+      if (supabaseAdmin) {
+        // Use Supabase Admin API: Bypasses email confirmation & rate limits completely!
+        const { data: adminAuthData, error: adminAuthErr } = await supabaseAdmin.auth.admin.createUser({
+          email: trimmedEmail,
+          password: rawPassword,
+          email_confirm: true,
+          user_metadata: {
+            full_name: trimmedName,
+            name: trimmedName,
+            role: "lecturer",
+          }
+        });
+
+        if (adminAuthErr || !adminAuthData.user) {
+          return res.status(400).json({ error: adminAuthErr?.message || "Gagal membuat akun auth dosen via Admin API." });
+        }
+        newUserId = adminAuthData.user.id;
+      } else {
+        // Fallback to signUp
+        const { data: authData, error: authErr } = await supabase.auth.signUp({
+          email: trimmedEmail,
+          password: rawPassword,
+          options: {
+            data: {
+              full_name: trimmedName,
+              name: trimmedName,
+              role: "lecturer",
+            }
+          }
+        });
+
+        if (authErr || !authData.user) {
+          if (authErr?.message?.toLowerCase().includes("rate limit")) {
+            return res.status(429).json({ 
+              error: "Email rate limit Supabase terlampaui. Untuk mengatasinya: Buka Supabase Dashboard -> Authentication -> Providers -> Email -> nonaktifkan 'Confirm email' (atau masukkan SUPABASE_SERVICE_ROLE_KEY di .env)." 
+            });
+          }
+          return res.status(400).json({ error: authErr?.message || "Gagal membuat akun auth dosen." });
+        }
+        newUserId = authData.user.id;
+      }
+
+      // Update or insert profile row with role = 'lecturer' (do not modify created_at)
+      const { data: checkProf } = await userSupabase
+        .from("profiles")
+        .select("id")
+        .eq("id", newUserId)
+        .maybeSingle();
+
+      let profileErr = null;
+      if (checkProf) {
+        const { error } = await userSupabase
+          .from("profiles")
+          .update({
+            name: trimmedName,
+            role: "lecturer",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", newUserId);
+        profileErr = error;
+      } else {
+        const { error } = await userSupabase
+          .from("profiles")
+          .insert({
+            id: newUserId,
+            email: trimmedEmail,
+            name: trimmedName,
+            role: "lecturer",
+          });
+        profileErr = error;
+      }
+
+      if (profileErr) {
+        console.error("Profile update error in server:", profileErr);
+        return res.status(500).json({ error: `Gagal memperbarui profil dosen: ${profileErr.message}` });
+      }
+
+      // Insert audit log using userSupabase
+      try {
+        await userSupabase.from("audit_logs").insert({
+          actor_id: callerUid,
+          actor_name: callerProfile.name || "Administrator",
+          actor_email: callerProfile.email || "",
+          action: "CREATE_LECTURER",
+          entity_type: "lecturer",
+          entity_id: newUserId,
+          metadata: { name: trimmedName, email: trimmedEmail },
+        });
+      } catch (auditErr) {
+        console.warn("Audit log insert error:", auditErr);
+      }
+
+      return res.json({
+        success: true,
+        lecturer: {
+          id: newUserId,
+          name: trimmedName,
+          email: trimmedEmail,
+          role: "lecturer",
+        }
+      });
+    } catch (err: any) {
+      console.error("Create lecturer server endpoint error:", err);
+      return res.status(500).json({ error: err.message || "Internal server error" });
     }
   });
 
@@ -182,38 +358,157 @@ async function startServer() {
     try {
       const { assignmentId, submittedFile, submittedLink, submittedNote } = req.body;
       const userUid = req.user!.uid;
+      const authHeader = req.headers.authorization;
 
-      const existing = await db.select().from(schema.submissions).where(
-        and(
-          eq(schema.submissions.assignmentId, Number(assignmentId)),
-          eq(schema.submissions.userUid, userUid)
-        )
-      );
+      let supabaseResult = null;
 
-      if (existing.length > 0) {
-        const updated = await db.update(schema.submissions)
-          .set({
-            submittedAt: new Date().toISOString(),
-            submittedFile,
-            submittedLink,
-            submittedNote,
-          })
-          .where(eq(schema.submissions.id, existing[0].id))
-          .returning();
-        res.json(updated[0]);
-      } else {
-        const inserted = await db.insert(schema.submissions)
-          .values({
-            assignmentId: Number(assignmentId),
-            userUid,
-            submittedAt: new Date().toISOString(),
-            submittedFile,
-            submittedLink,
-            submittedNote,
-          })
-          .returning();
-        res.json(inserted[0]);
+      // 1. Check if assignment is closed
+      if (supabaseUrl && supabaseAnonKey) {
+        try {
+          const { data: asgData } = await supabase
+            .from('assignments')
+            .select('id, title, status')
+            .eq('id', assignmentId)
+            .single();
+
+          if (asgData && asgData.status === 'closed') {
+            return res.status(400).json({
+              error: 'assignment_closed',
+              title: asgData.title || 'Tugas',
+              message: `${asgData.title || 'Tugas'} Closed`,
+            });
+          }
+        } catch (e) {
+          console.error("Assignment status check failed:", e);
+        }
       }
+
+      // 2. Submit to Supabase directly
+      if (supabaseUrl && supabaseAnonKey) {
+        try {
+          const userSupabase = authHeader
+            ? createClient(supabaseUrl, supabaseAnonKey, {
+                global: {
+                  headers: {
+                    Authorization: authHeader,
+                  },
+                },
+              })
+            : supabase;
+
+          // Check if submission already exists in Supabase
+          const { data: existingSubs, error: checkErr } = await userSupabase
+            .from('submissions')
+            .select('id')
+            .eq('assignment_id', assignmentId)
+            .eq('student_id', userUid);
+
+          if (existingSubs && existingSubs.length > 0) {
+            const { data: updatedSub, error: updateErr } = await userSupabase
+              .from('submissions')
+              .update({
+                submitted_at: new Date().toISOString(),
+                file_path: submittedFile || null,
+                submitted_link: submittedLink || null,
+                submitted_note: submittedNote || null,
+              })
+              .eq('id', existingSubs[0].id)
+              .select();
+
+            if (updateErr) {
+              console.error("Supabase authenticated update error, attempting default client:", updateErr);
+              const { data: fallbackUpdated } = await supabase
+                .from('submissions')
+                .update({
+                  submitted_at: new Date().toISOString(),
+                  file_path: submittedFile || null,
+                  submitted_link: submittedLink || null,
+                  submitted_note: submittedNote || null,
+                })
+                .eq('id', existingSubs[0].id)
+                .select();
+              supabaseResult = fallbackUpdated?.[0];
+            } else {
+              supabaseResult = updatedSub?.[0];
+            }
+          } else {
+            const { data: insertedSub, error: insertErr } = await userSupabase
+              .from('submissions')
+              .insert({
+                assignment_id: assignmentId,
+                student_id: userUid,
+                submitted_at: new Date().toISOString(),
+                file_path: submittedFile || null,
+                submitted_link: submittedLink || null,
+                submitted_note: submittedNote || null,
+              })
+              .select();
+
+            if (insertErr) {
+              console.error("Supabase authenticated insert error, attempting default client:", insertErr);
+              const { data: fallbackInserted } = await supabase
+                .from('submissions')
+                .insert({
+                  assignment_id: assignmentId,
+                  student_id: userUid,
+                  submitted_at: new Date().toISOString(),
+                  file_path: submittedFile || null,
+                  submitted_link: submittedLink || null,
+                  submitted_note: submittedNote || null,
+                })
+                .select();
+              supabaseResult = fallbackInserted?.[0];
+            } else {
+              supabaseResult = insertedSub?.[0];
+            }
+          }
+        } catch (sErr: any) {
+          console.error("Supabase submission proxy error:", sErr);
+        }
+      }
+
+      // 2. Also save to local DB if assignmentId is numeric
+      let localResult = null;
+      const numericAssignmentId = Number(assignmentId);
+      if (!isNaN(numericAssignmentId)) {
+        try {
+          const existing = await db.select().from(schema.submissions).where(
+            and(
+              eq(schema.submissions.assignmentId, numericAssignmentId),
+              eq(schema.submissions.userUid, userUid)
+            )
+          );
+
+          if (existing.length > 0) {
+            const updated = await db.update(schema.submissions)
+              .set({
+                submittedAt: new Date().toISOString(),
+                submittedFile,
+                submittedLink,
+                submittedNote,
+              })
+              .where(eq(schema.submissions.id, existing[0].id))
+              .returning();
+            localResult = updated[0];
+          } else {
+            const inserted = await db.insert(schema.submissions)
+              .values({
+                assignmentId: numericAssignmentId,
+                userUid,
+                submittedAt: new Date().toISOString(),
+                submittedFile,
+                submittedLink,
+                submittedNote,
+              })
+              .returning();
+            localResult = inserted[0];
+          }
+        } catch (dbErr) {
+          console.error("Local DB submission error:", dbErr);
+        }
+      }
+
+      res.json(supabaseResult || localResult || { success: true });
     } catch (err: any) {
       console.error("Submit assignment failed:", err);
       res.status(500).json({ error: err.message });

@@ -2,7 +2,7 @@ import React, { useState, useEffect, startTransition, useMemo } from 'react';
 import { 
   Bell, CheckCircle, ArrowRight, ArrowLeft, CloudUpload, FileText, 
   Link as LinkIcon, History, User as UserIcon, Calendar, Compass, FileCheck2, ClipboardList,
-  BookOpen, Loader2, Download, ExternalLink, FileSpreadsheet, Link2
+  BookOpen, Loader2, Download, ExternalLink, FileSpreadsheet, Link2, AlertTriangle
 } from 'lucide-react';
 import { User, Assignment } from '../types';
 import { COURSES } from '../data';
@@ -47,14 +47,18 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
 
   // Interactive Form Inputs
   const [simulatedFileName, setSimulatedFileName] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const [submissionLink, setSubmissionLink] = useState('');
   const [submissionNote, setSubmissionNote] = useState('');
-  const [integrityChecked, setIntegrityChecked] = useState(false);
 
   // Simulated upload state
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
+  const [showClosedModal, setShowClosedModal] = useState(false);
+  const [closedModalTaskTitle, setClosedModalTaskTitle] = useState('');
 
   // Enrollments state
   const [enrollments, setEnrollments] = useState<any[]>([]);
@@ -342,6 +346,7 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
       const sub = submissions.find(s => s.assignmentId === asm.id);
       return {
         ...asm,
+        assignmentStatus: asm.status,
         status: sub ? 'submitted' : 'not-submitted',
         submittedAt: sub ? sub.submittedAt : undefined,
         submittedFile: sub ? sub.submittedFile : undefined,
@@ -372,44 +377,75 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
   const handleSelectAssignment = (assignment: any) => {
     startTransition(() => {
       setSelectedAssignment(assignment);
+      setSelectedFile(null);
       setSimulatedFileName(assignment.submittedFile || '');
       setSubmissionLink(assignment.submittedLink || '');
       setSubmissionNote(assignment.submittedNote || '');
       setUploadProgress(assignment.status === 'submitted' ? 100 : 0);
       setIsUploading(false);
-      setIntegrityChecked(assignment.status === 'submitted');
     });
   };
 
-  // Simulates loading a dummy document
-  const handleLoadDummyFile = () => {
-    setSimulatedFileName('comprehensive_analysis_routing_v3.pdf');
-    setIsUploading(true);
-    setUploadProgress(0);
-    let current = 0;
-    const interval = setInterval(() => {
-      current += 25;
-      setUploadProgress(current);
-      if (current >= 100) {
-        clearInterval(interval);
-        setIsUploading(false);
-      }
-    }, 120);
+  const handleFilePicked = (file: File) => {
+    // Validate file size: 25MB max
+    const maxSizeBytes = 25 * 1024 * 1024;
+    if (file.size > maxSizeBytes) {
+      alert('Ukuran berkas melebihi batas maksimal 25MB.');
+      return;
+    }
+    setSelectedFile(file);
+    setSimulatedFileName(file.name);
+    setUploadProgress(100);
+  };
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      handleFilePicked(e.target.files[0]);
+    }
   };
 
   const handleRemoveFile = () => {
+    setSelectedFile(null);
     setSimulatedFileName('');
     setUploadProgress(0);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleDownloadSubmittedFile = async (filePath: string) => {
+    if (!filePath) return;
+    try {
+      const { data, error } = await supabase.storage
+        .from('assignment-submissions')
+        .download(filePath);
+
+      if (error) {
+        console.error('Storage download error:', error);
+        alert('Berkas tidak dapat diunduh dari server atau file tidak ditemukan.');
+        return;
+      }
+
+      const blobUrl = window.URL.createObjectURL(data);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      const baseName = filePath.split('/').pop() || 'tugas.pdf';
+      const cleanName = baseName.replace(/^\d+-/, '');
+      link.download = cleanName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (err: any) {
+      console.error('Error downloading file:', err);
+      alert('Gagal mengunduh berkas tugas.');
+    }
   };
 
   // Handle Complete Submission
   const handleSubmitSubmission = async () => {
-    if (!integrityChecked) {
-      alert('Konfirmasikan kejujuran akademik dengan mencentang kotak verifikasi.');
-      return;
-    }
-    if (activeSubmitTab === 'file' && !simulatedFileName) {
-      alert('Silakan unggah dokumen atau beralih ke kumpul link.');
+    if (activeSubmitTab === 'file' && !simulatedFileName && !selectedFile) {
+      alert('Silakan pilih berkas dokumen (PDF/Doc) untuk diunggah.');
       return;
     }
     if (activeSubmitTab === 'link' && !submissionLink.trim()) {
@@ -418,53 +454,60 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
     }
 
     if (selectedAssignment) {
+      if (selectedAssignment.assignmentStatus === 'closed' || selectedAssignment.status === 'closed') {
+        setClosedModalTaskTitle(selectedAssignment.title || 'Tugas');
+        setShowClosedModal(true);
+        return;
+      }
+
       try {
         setIsUploading(true);
         const uid = user.uid;
+        let finalFilePath: string | null = null;
 
-        // Check if there is already a submission for this assignment by this student
-        const { data: existing, error: checkError } = await supabase
-          .from('submissions')
-          .select('id')
-          .eq('assignment_id', selectedAssignment.id)
-          .eq('student_id', uid);
+        if (activeSubmitTab === 'file') {
+          if (selectedFile) {
+            // Upload real file to Supabase storage 'assignment-submissions'
+            const cleanFileName = selectedFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+            const storagePath = `${selectedAssignment.id}/${uid}/${Date.now()}-${cleanFileName}`;
 
-        if (checkError) throw checkError;
+            const { error: uploadErr } = await supabase.storage
+              .from('assignment-submissions')
+              .upload(storagePath, selectedFile, { upsert: true });
 
-        if (existing && existing.length > 0) {
-          // Update existing submission
-          const { error: updateError } = await supabase
-            .from('submissions')
-            .update({
-              submitted_at: new Date().toISOString(),
-              file_path: activeSubmitTab === 'file' ? simulatedFileName : null,
-              submitted_link: activeSubmitTab === 'link' ? submissionLink : null,
-              submitted_note: submissionNote || null,
-            })
-            .eq('id', existing[0].id);
-
-          if (updateError) throw updateError;
-        } else {
-          // Insert new submission
-          const { error: insertError } = await supabase
-            .from('submissions')
-            .insert({
-              assignment_id: selectedAssignment.id,
-              student_id: uid,
-              submitted_at: new Date().toISOString(),
-              file_path: activeSubmitTab === 'file' ? simulatedFileName : null,
-              submitted_link: activeSubmitTab === 'link' ? submissionLink : null,
-              submitted_note: submissionNote || null,
-            });
-
-          if (insertError) throw insertError;
+            if (uploadErr) {
+              console.error('Storage upload error:', uploadErr);
+              throw new Error(`Gagal mengunggah file ke penyimpanan: ${uploadErr.message}`);
+            }
+            finalFilePath = storagePath;
+          } else {
+            // Retain previously stored file path
+            finalFilePath = simulatedFileName || null;
+          }
         }
+
+        // Submit assignment via robust backend API proxy (handles Supabase and DB securely)
+        await apiRequest<any>('/api/submissions', {
+          method: 'POST',
+          body: JSON.stringify({
+            assignmentId: selectedAssignment.id,
+            submittedFile: finalFilePath,
+            submittedLink: activeSubmitTab === 'link' ? submissionLink : null,
+            submittedNote: submissionNote || null,
+          }),
+        });
 
         // Refresh database state
         await fetchData();
         setShowSuccessOverlay(true);
       } catch (err: any) {
-        alert('Gagal mengirimkan tugas: ' + err.message);
+        const errorMsg = err.message || '';
+        if (errorMsg.toLowerCase().includes('closed') || errorMsg.includes('assignment_closed')) {
+          setClosedModalTaskTitle(selectedAssignment.title || 'Tugas');
+          setShowClosedModal(true);
+        } else {
+          alert('Gagal mengirimkan tugas: ' + (errorMsg || 'Error tidak diketahui'));
+        }
       } finally {
         setIsUploading(false);
       }
@@ -567,13 +610,25 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
 
             {/* Task Summary Section */}
             <section className="mb-6">
+              {selectedAssignment.assignmentStatus === 'closed' && (
+                <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-2.5 text-amber-800 text-xs font-bold font-sans animate-in fade-in duration-200">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>Pengumpulan untuk tugas ini telah ditutup oleh dosen ({selectedAssignment.title} Closed).</span>
+                </div>
+              )}
               <div className="flex items-center justify-between mb-3">
                 <span className={`px-3 py-1 rounded-full text-xs font-bold border ${
                   selectedAssignment.status === 'submitted'
                     ? 'bg-secondary-container/40 text-on-secondary-container border-secondary-container/20'
+                    : selectedAssignment.assignmentStatus === 'closed'
+                    ? 'bg-amber-50 text-amber-700 border-amber-200'
                     : 'bg-red-50 text-red-600 border-red-100'
                 }`}>
-                  {selectedAssignment.status === 'submitted' ? 'Sudah Dikumpulkan' : 'Belum Dikumpulkan'}
+                  {selectedAssignment.status === 'submitted' 
+                    ? 'Sudah Dikumpulkan' 
+                    : selectedAssignment.assignmentStatus === 'closed' 
+                    ? 'Tugas Ditutup' 
+                    : 'Belum Dikumpulkan'}
                 </span>
                 <span className="text-on-surface-variant font-semibold text-xs uppercase tracking-wide">
                   Poin Maksimal: {selectedAssignment.points}
@@ -632,31 +687,103 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
                 {/* File Upload Section */}
                 {activeSubmitTab === 'file' && (
                   <div>
-                    {!simulatedFileName ? (
+                    {/* Hidden Native File Input */}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".pdf,.doc,.docx,.zip,.rar,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                      className="hidden"
+                      onChange={handleFileInputChange}
+                    />
+
+                    {!simulatedFileName && !selectedFile ? (
                       <div 
-                        className="flex flex-col items-center justify-center border-2 border-dashed border-outline-variant/60 rounded-xl p-8 cursor-pointer hover:bg-gray-50 hover:border-primary/40 transition-all group active:scale-[0.98]"
-                        onClick={handleLoadDummyFile}
+                        className={`flex flex-col items-center justify-center border-2 border-dashed rounded-2xl p-8 cursor-pointer transition-all group select-none ${
+                          isDragOver 
+                            ? 'border-primary bg-primary/5 scale-[1.01]' 
+                            : 'border-outline-variant/60 hover:bg-slate-50 hover:border-primary/40'
+                        }`}
+                        onClick={() => fileInputRef.current?.click()}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          setIsDragOver(true);
+                        }}
+                        onDragLeave={(e) => {
+                          e.preventDefault();
+                          setIsDragOver(false);
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setIsDragOver(false);
+                          if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                            handleFilePicked(e.dataTransfer.files[0]);
+                          }
+                        }}
                       >
-                        <CloudUpload className="text-primary w-10 h-10 mb-3 group-hover:scale-110 transition-transform" />
-                        <span className="text-xs font-bold text-primary mb-1">Klik untuk mensimulasikan unggah PDF</span>
-                        <span className="text-[10px] text-on-surface-variant text-center font-medium">
-                          Maksimal ukuran file: 25MB
+                        <div className="w-14 h-14 rounded-2xl bg-teal-50 flex items-center justify-center text-teal-600 mb-3 group-hover:scale-110 transition-transform">
+                          <CloudUpload className="w-7 h-7" />
+                        </div>
+                        <span className="text-xs font-bold text-slate-900 mb-1">
+                          Klik untuk memilih file PDF atau seret berkas ke sini
                         </span>
+                        <span className="text-[10px] text-slate-500 text-center font-medium">
+                          Mendukung format PDF, DOC, DOCX, ZIP (Maksimal 25MB)
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            fileInputRef.current?.click();
+                          }}
+                          className="mt-4 px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all cursor-pointer shadow-xs"
+                        >
+                          Pilih Berkas PDF
+                        </button>
                       </div>
                     ) : (
-                      <div className="p-4 bg-gray-50 rounded-xl flex items-center justify-between border border-outline-variant/30 animate-in fade-in slide-in-from-top-2 duration-200">
+                      <div className="p-4 bg-slate-50 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-slate-200/80 animate-in fade-in slide-in-from-top-2 duration-200">
                         <div className="flex items-center gap-3 min-w-0">
-                          <FileText className="text-secondary w-5 h-5 shrink-0" />
-                          <span className="text-xs font-semibold text-primary truncate max-w-[240px]">
-                            {simulatedFileName}
-                          </span>
+                          <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center text-red-500 shrink-0">
+                            <FileText className="w-5 h-5" />
+                          </div>
+                          <div className="min-w-0">
+                            <span className="text-xs font-bold text-slate-900 truncate block">
+                              {selectedFile ? selectedFile.name : (simulatedFileName.split('/').pop()?.replace(/^\d+-/, '') || simulatedFileName)}
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-semibold block mt-0.5">
+                              {selectedFile 
+                                ? `${(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • Siap diunggah` 
+                                : 'Berkas tersimpan di sistem'}
+                            </span>
+                          </div>
                         </div>
-                        <button 
-                          className="text-red-500 hover:bg-red-50 p-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer"
-                          onClick={handleRemoveFile}
-                        >
-                          ✕ Hapus
-                        </button>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          {simulatedFileName && !selectedFile && (
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadSubmittedFile(simulatedFileName)}
+                              className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-xl text-xs font-bold transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-2xs"
+                              title="Unduh Berkas"
+                            >
+                              <Download className="w-3.5 h-3.5" /> Unduh
+                            </button>
+                          )}
+                          <button 
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-xl text-xs font-bold transition-colors cursor-pointer shadow-2xs"
+                          >
+                            Ganti File
+                          </button>
+                          <button 
+                            type="button"
+                            className="px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                            onClick={handleRemoveFile}
+                          >
+                            ✕ Hapus
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -696,27 +823,21 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
               />
             </div>
 
-            {/* Guidelines checkbox */}
-            <div className="mt-6 p-4 bg-gray-50 border border-outline-variant/20 rounded-xl flex items-start gap-3 select-none">
-              <input 
-                className="mt-0.5 rounded border-outline-variant text-secondary focus:ring-secondary shrink-0 cursor-pointer" 
-                id="confirmCheck" 
-                type="checkbox"
-                checked={integrityChecked}
-                onChange={(e) => setIntegrityChecked(e.target.checked)}
-              />
-              <label className="text-xs font-medium text-on-surface-variant cursor-pointer leading-relaxed" htmlFor="confirmCheck">
-                Saya menyatakan bahwa ini adalah karya asli saya dan mengikuti pedoman integritas akademik yang berlaku.
-              </label>
-            </div>
-
             {/* Submit Button */}
             <button 
-              className="w-full bg-primary hover:bg-primary/95 text-white py-3.5 rounded-full font-bold text-xs mt-6 transition-all flex items-center justify-center gap-2 cursor-pointer auth-card-shadow"
+              className={`w-full py-3.5 rounded-full font-bold text-xs mt-6 transition-all flex items-center justify-center gap-2 cursor-pointer auth-card-shadow ${
+                selectedAssignment.assignmentStatus === 'closed'
+                  ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                  : 'bg-primary hover:bg-primary/95 text-white'
+              }`}
               onClick={handleSubmitSubmission}
               disabled={isUploading}
             >
-              {isUploading ? 'Sedang mengunggah...' : 'Kumpulkan Tugas Sekarang'}
+              {isUploading 
+                ? 'Sedang mengunggah...' 
+                : selectedAssignment.assignmentStatus === 'closed'
+                ? `Kumpulkan (${selectedAssignment.title} Closed)`
+                : 'Kumpulkan Tugas Sekarang'}
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
@@ -1202,15 +1323,38 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
             <div className="w-16 h-16 bg-secondary/10 text-secondary rounded-full flex items-center justify-center mb-4 select-none">
               <CheckCircle className="w-10 h-10" />
             </div>
-            <h3 className="text-lg font-bold text-primary mb-2">Tugas Berhasil Dikumpulkan</h3>
-            <p className="text-xs text-on-surface-variant leading-relaxed mb-6 font-semibold">
-              Tugas Anda telah berhasil dicatat ke dalam database. Anda dapat meninjau nilai atau riwayat tugas di tab Riwayat.
-            </p>
+            <h3 className="text-lg font-bold text-primary mb-6">Tugas Berhasil Dikumpulkan</h3>
             <button 
               className="w-full bg-secondary hover:bg-secondary/95 text-white py-3 rounded-full font-bold text-xs transition-colors cursor-pointer auth-card-shadow"
               onClick={handleCloseSuccess}
             >
               Kembali ke Dashboard
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* CLOSED TASK WARNING POPUP MODAL */}
+      {showClosedModal && (
+        <div className="fixed inset-0 bg-primary/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm flex flex-col items-center text-center auth-card-shadow animate-in fade-in zoom-in-95 duration-200 border border-amber-200">
+            <div className="w-16 h-16 bg-amber-50 text-amber-600 rounded-full flex items-center justify-center mb-4 select-none border border-amber-100">
+              <AlertTriangle className="w-9 h-9" />
+            </div>
+            <h3 className="text-lg font-bold text-primary mb-2">
+              {closedModalTaskTitle} Closed
+            </h3>
+            <p className="text-xs text-on-surface-variant font-medium leading-relaxed mb-6">
+              Pengumpulan untuk tugas ini telah ditutup oleh dosen pengampu. Anda tidak dapat lagi mengirimkan tugas ini.
+            </p>
+            <button 
+              className="w-full bg-primary hover:bg-primary/95 text-white py-3 rounded-full font-bold text-xs transition-colors cursor-pointer auth-card-shadow"
+              onClick={() => {
+                setShowClosedModal(false);
+                setSelectedAssignment(null);
+              }}
+            >
+              Tutup & Kembali ke Daftar Tugas
             </button>
           </div>
         </div>

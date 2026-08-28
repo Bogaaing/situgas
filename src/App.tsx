@@ -3,9 +3,9 @@ import { User } from './types';
 import LoginPage from './components/LoginPage';
 import LecturerPortal from './components/LecturerPortal';
 import StudentPortal from './components/StudentPortal';
+import AdminPortal from './components/AdminPortal';
 import { supabase } from './lib/supabase';
-import { apiRequest, setIdToken } from './lib/api';
-import { ShieldCheck } from 'lucide-react';
+import { setIdToken } from './lib/api';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -34,12 +34,21 @@ export default function App() {
           if (dbError) throw dbError;
 
           if (dbUser) {
-            if (dbUser.role === 'lecturer') {
+            if (dbUser.role === 'admin') {
+              setCurrentUser({
+                uid: dbUser.id,
+                role: 'admin',
+                email: dbUser.email || session.user.email || '',
+                name: dbUser.name || 'Administrator',
+                avatarUrl: dbUser.avatar_url || '',
+                idNumber: dbUser.nim || undefined,
+              });
+            } else if (dbUser.role === 'lecturer') {
               setCurrentUser({
                 uid: dbUser.id,
                 role: 'lecturer',
-                email: dbUser.email,
-                name: dbUser.name,
+                email: dbUser.email || session.user.email || '',
+                name: dbUser.name || 'Dosen',
                 avatarUrl: dbUser.avatar_url || '',
                 idNumber: dbUser.nim || undefined,
               });
@@ -48,12 +57,12 @@ export default function App() {
                 uid: dbUser.id,
                 role: 'student',
                 email: dbUser.email || `${dbUser.nim || dbUser.id}@students.situgas.local`,
-                name: dbUser.name,
+                name: dbUser.name || 'Mahasiswa',
                 avatarUrl: dbUser.avatar_url || '',
                 idNumber: dbUser.nim || undefined,
               });
             } else {
-              // Sign out if role is not lecturer or student
+              // Sign out if role is unknown or not permitted
               await supabase.auth.signOut();
               setCurrentUser(null);
             }
@@ -111,8 +120,8 @@ export default function App() {
   if (isLoadingAuth) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-        <p className="mt-4 text-xs font-semibold text-primary">Memuat SITugas...</p>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#0B2147]"></div>
+        <p className="mt-4 text-xs font-semibold text-[#0B2147]">Memuat SITugas...</p>
       </div>
     );
   }
@@ -121,6 +130,11 @@ export default function App() {
     <div className="relative min-h-screen font-sans antialiased text-gray-900 bg-background selection:bg-secondary selection:text-white">
       {!currentUser ? (
         <LoginPage onLogin={handleLogin} />
+      ) : currentUser.role === 'admin' ? (
+        <AdminPortal
+          user={currentUser}
+          onLogout={handleLogout}
+        />
       ) : currentUser.role === 'lecturer' ? (
         <LecturerPortal
           user={currentUser}

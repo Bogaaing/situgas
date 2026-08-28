@@ -8,7 +8,7 @@ create extension if not exists "uuid-ossp";
 -- ==========================================
 -- 1. ENUMS & CUSTOM TYPES
 -- ==========================================
-create type public.user_role as enum ('lecturer', 'student');
+create type public.user_role as enum ('admin', 'lecturer', 'student');
 create type public.assignment_status as enum ('draft', 'published', 'closed');
 
 -- ==========================================
@@ -184,19 +184,29 @@ $$ language plpgsql stable;
 -- Guard: Protect profile fields (only allow updating name, avatar_url, and updated_at)
 create or replace function public.protect_profile_updates()
 returns trigger security definer set search_path = public, pg_temp as $$
+declare
+  v_caller_role text;
 begin
   if OLD.id <> NEW.id then
     raise exception 'ID profil tidak dapat diubah.';
   end if;
-  if OLD.role <> NEW.role then
-    raise exception 'Perubahan role pengguna dilarang demi keamanan.';
+  
+  if auth.uid() is not null then
+    select role::text into v_caller_role from public.profiles where id = auth.uid();
+    
+    if v_caller_role is null or v_caller_role <> 'admin' then
+      if OLD.role <> NEW.role then
+        raise exception 'Perubahan role pengguna dilarang demi keamanan.';
+      end if;
+      if OLD.nim is distinct from NEW.nim then
+        raise exception 'NIM mahasiswa bersifat permanen dan tidak dapat diubah.';
+      end if;
+      if OLD.email is distinct from NEW.email then
+        raise exception 'Email tidak dapat diubah melalui profil.';
+      end if;
+    end if;
   end if;
-  if OLD.nim is distinct from NEW.nim then
-    raise exception 'NIM mahasiswa bersifat permanen dan tidak dapat diubah.';
-  end if;
-  if OLD.email is distinct from NEW.email then
-    raise exception 'Email tidak dapat diubah melalui profil.';
-  end if;
+
   if OLD.created_at <> NEW.created_at then
     raise exception 'Waktu pembuatan tidak dapat diubah.';
   end if;

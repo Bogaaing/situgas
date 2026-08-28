@@ -1,6 +1,6 @@
 export interface User {
   uid: string;
-  role: 'student' | 'lecturer';
+  role: 'student' | 'lecturer' | 'admin';
   email: string;
   name: string;
   avatarUrl: string;

@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Users, BarChart3, Search, Bell, Settings, LogOut, 
   Plus, Edit, Trash2, ArrowRight, BookOpen, Clock, Calendar, CheckSquare, ClipboardList,
   GraduationCap, UserPlus, FileSpreadsheet, Download, AlertTriangle, CheckCircle2, Loader2, Upload, Eye,
-  Link2, ExternalLink, FileText, Menu, X
+  Link2, ExternalLink, FileText, Menu, X, HelpCircle, ChevronLeft, ChevronRight
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { User, Assignment } from '../types';
@@ -31,6 +31,22 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
   // Sidebar state: 'overview' | 'assignments' | 'students' | 'attendance' | 'schedules' | 'reports' | 'master_students' | 'courses' | 'materials'
   const [activeTab, setActiveTab] = useState<'overview' | 'assignments' | 'students' | 'attendance' | 'schedules' | 'reports' | 'master_students' | 'courses' | 'materials'>('overview');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
+
+  const currentTabTitle = useMemo(() => {
+    switch (activeTab) {
+      case 'overview': return 'Dashboard';
+      case 'courses': return 'Mata Kuliah';
+      case 'materials': return 'Materi Perkuliahan';
+      case 'students': return 'Mahasiswa';
+      case 'master_students': return 'Data Mahasiswa';
+      case 'assignments': return 'Tugas';
+      case 'reports': return 'Statistik & Laporan';
+      default: return 'Portal Dosen';
+    }
+  }, [activeTab]);
 
   // Mobile sidebar accessibility, body scroll locking & Escape key close
   useEffect(() => {
@@ -352,6 +368,8 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
         className: env.class_name,
         roomName: env.room_name,
         courseUuid: env.course_id,
+        student: env.student,
+        course: env.course,
       }));
 
       setMockEnrollments(formattedEnrollments);
@@ -924,8 +942,16 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
   const [isSavingGrade, setIsSavingGrade] = useState(false);
   const [gradingError, setGradingError] = useState<string | null>(null);
   const [gradingSuccess, setGradingSuccess] = useState<boolean>(false);
+  const [isGradingSuccessModalOpen, setIsGradingSuccessModalOpen] = useState<boolean>(false);
+  const [gradedStudentInfo, setGradedStudentInfo] = useState<{ name: string; grade: number; maxPoints: number } | null>(null);
   const [localGradeValue, setLocalGradeValue] = useState<string>('');
   const [localFeedbackValue, setLocalFeedbackValue] = useState<string>('');
+
+  // Report filters state
+  const [reportSearch, setReportSearch] = useState<string>('');
+  const [reportCourseFilter, setReportCourseFilter] = useState<string>('all');
+  const [reportClassFilter, setReportClassFilter] = useState<string>('all');
+  const [reportStatusFilter, setReportStatusFilter] = useState<string>('all');
 
   const loadTargetStudentsForAssignment = async (assignmentId: string) => {
     setTargetStudentsLoading(true);
@@ -1002,6 +1028,31 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
         };
       });
 
+      // Sort: Mahasiswa yang baru mengumpulkan tugas berada di paling atas
+      merged.sort((a, b) => {
+        const aSub = a.submission;
+        const bSub = b.submission;
+
+        // Kedua mahasiswa sudah mengumpulkan: urutkan dari waktu pengumpulan terbaru (descending)
+        if (aSub && bSub) {
+          const aTime = aSub.submitted_at ? new Date(aSub.submitted_at).getTime() : 0;
+          const bTime = bSub.submitted_at ? new Date(bSub.submitted_at).getTime() : 0;
+          if (bTime !== aTime) {
+            return bTime - aTime;
+          }
+          return a.name.localeCompare(b.name);
+        }
+
+        // Mahasiswa 'a' sudah mengumpulkan, 'b' belum -> 'a' lebih atas
+        if (aSub && !bSub) return -1;
+
+        // Mahasiswa 'b' sudah mengumpulkan, 'a' belum -> 'b' lebih atas
+        if (!aSub && bSub) return 1;
+
+        // Keduanya belum mengumpulkan: urutkan alfabetis nama
+        return a.name.localeCompare(b.name);
+      });
+
       setTargetStudents(merged);
 
       // If viewing a submission, update local view data
@@ -1076,9 +1127,18 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
         }),
       });
 
-      setGradingSuccess(true);
+      setGradedStudentInfo({
+        name: selectedSubmissionForDetail.name,
+        grade: normalizedGrade,
+        maxPoints: assignment.max_points,
+      });
+      setIsGradingSuccessModalOpen(true);
+      setSelectedSubmissionForDetail(null); // Otomatis kembali ke tampilan daftar pengumpulan
+
       await loadTargetStudentsForAssignment(selectedAsgSubmissionsId);
       await loadData();
+      await loadEnrollments();
+      await loadCourses();
     } catch (err: any) {
       console.error('Error saving grade:', err);
       setGradingError(err.message || 'Gagal menyimpan penilaian.');
@@ -1182,10 +1242,11 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const [studentsData, attendanceData, schedulesData] = await Promise.all([
-        apiRequest<any[]>('/api/students'),
-        apiRequest<any[]>('/api/attendance'),
-        apiRequest<any[]>('/api/schedules'),
+      const [studentsData, attendanceData, schedulesData, apiSubs] = await Promise.all([
+        apiRequest<any[]>('/api/students').catch(() => []),
+        apiRequest<any[]>('/api/attendance').catch(() => []),
+        apiRequest<any[]>('/api/schedules').catch(() => []),
+        apiRequest<any[]>('/api/submissions').catch(() => []),
       ]);
 
       // Fetch submissions directly from Supabase
@@ -1193,21 +1254,45 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
         .from('submissions')
         .select('*');
 
-      let formattedSubmissions: any[] = [];
       if (subsError) {
         console.error('Error loading submissions from Supabase:', subsError);
-      } else {
-        formattedSubmissions = (subsData || []).map((sub: any) => ({
-          id: sub.id,
-          assignmentId: sub.assignment_id,
-          userUid: sub.student_id,
-          submittedAt: sub.submitted_at,
-          submittedFile: sub.file_path,
-          submittedLink: sub.submitted_link,
-          submittedNote: sub.submitted_note,
-          grade: sub.grade,
-          feedback: sub.feedback
-        }));
+      }
+
+      // Merge Supabase submissions and API submissions, deduplicating by ID or composite key
+      const rawCombined = [...(subsData || []), ...(Array.isArray(apiSubs) ? apiSubs : [])];
+      const seenKeys = new Set<string>();
+      const formattedSubmissions: any[] = [];
+
+      for (const sub of rawCombined) {
+        if (!sub) continue;
+        const subId = String(sub.id || '').trim();
+        const asgId = String(sub.assignment_id || sub.assignmentId || '').trim();
+        const studId = String(sub.student_id || sub.userUid || sub.studentId || '').trim();
+        const key = subId || `${asgId}_${studId}`;
+
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          const rawGrade = sub.grade;
+          const parsedGrade = rawGrade !== null && rawGrade !== undefined && rawGrade !== '' && !isNaN(Number(rawGrade))
+            ? Number(rawGrade)
+            : null;
+
+          formattedSubmissions.push({
+            id: sub.id,
+            assignmentId: asgId,
+            assignment_id: asgId,
+            userUid: studId,
+            student_id: studId,
+            studentId: studId,
+            submittedAt: sub.submitted_at || sub.submittedAt,
+            submittedFile: sub.file_path || sub.submittedFile,
+            submittedLink: sub.submitted_link || sub.submittedLink,
+            submittedNote: sub.submitted_note || sub.submittedNote,
+            grade: parsedGrade,
+            feedback: sub.feedback || '',
+            graded_at: sub.graded_at || sub.gradedAt,
+          });
+        }
       }
 
       setStudents(studentsData);
@@ -1226,6 +1311,15 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
     loadCourses();
     loadEnrollments();
   }, []);
+
+  // Reload latest data whenever lecturer navigates to reports tab
+  useEffect(() => {
+    if (activeTab === 'reports') {
+      loadData();
+      loadCourses();
+      loadEnrollments();
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     if (courses.length > 0) {
@@ -1296,6 +1390,204 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
       };
     });
   }, [courses, assignments, submissions]);
+
+  // Student task reports calculation per enrollment (student x course x class)
+  const studentTaskReports = useMemo(() => {
+    return mockEnrollments.map((env) => {
+      // 1. Resolve student info
+      const studentObj = (env as any).student ||
+        mockStudents.find(s => String(s.id).trim() === String(env.studentId).trim()) ||
+        students.find(s => String(s.id).trim() === String(env.studentId).trim() || String(s.uid).trim() === String(env.studentId).trim());
+
+      const studentNim = studentObj?.nim || studentObj?.idNumber || '-';
+      const studentName = studentObj?.name || 'Mahasiswa';
+      const studentAvatar = studentObj?.avatarUrl || '';
+
+      // 2. Resolve course info
+      const courseObj = (env as any).course || courses.find(c => 
+        (env.courseUuid && String(c.id).trim() === String(env.courseUuid).trim()) ||
+        (env.courseId && String(c.code).trim().toLowerCase() === String(env.courseId).trim().toLowerCase()) ||
+        (env.courseId && String(c.id).trim() === String(env.courseId).trim())
+      );
+      
+      const courseCode = courseObj?.code || env.courseId || '-';
+      const courseName = courseObj?.name || courseCode;
+      const courseUuid = env.courseUuid || courseObj?.id;
+
+      // 3. Find all assignments belonging to this course
+      const courseAssignments = assignments.filter(a => {
+        const matchUuid = courseUuid && String(a.course_id).trim() === String(courseUuid).trim();
+        const matchCode = courseCode && (
+          String(a.course_id).trim().toLowerCase() === String(courseCode).trim().toLowerCase() ||
+          (a.course?.code && String(a.course.code).trim().toLowerCase() === String(courseCode).trim().toLowerCase())
+        );
+        const matchNestedId = a.course?.id && courseUuid && String(a.course.id).trim() === String(courseUuid).trim();
+        return Boolean(matchUuid || matchCode || matchNestedId);
+      });
+
+      // Filter to relevant assignments for this student's class (or general / all classes)
+      const relevantAssignments = courseAssignments.filter(a => {
+        if (!a.class_name || a.class_name.trim() === '') return true;
+        const normAsgClass = a.class_name.trim().toLowerCase();
+        if (normAsgClass === 'all' || normAsgClass === 'semua kelas') return true;
+        const normStudentClass = (env.className || '').trim().toLowerCase();
+        return normAsgClass === normStudentClass;
+      });
+
+      const relevantAssignmentIds = new Set(relevantAssignments.map(a => String(a.id).toLowerCase().trim()));
+      const courseAssignmentIds = new Set(courseAssignments.map(a => String(a.id).toLowerCase().trim()));
+
+      // 4. Match student's submissions for this course & class
+      const validStudentIds = new Set([
+        String(env.studentId || '').toLowerCase().trim(),
+        String((env as any).student?.id || '').toLowerCase().trim(),
+        String(studentObj?.id || '').toLowerCase().trim(),
+        String(studentObj?.uid || '').toLowerCase().trim(),
+      ].filter(Boolean));
+
+      const studentSubmissions = submissions.filter(s => {
+        const subStudentId = String(s.userUid || s.student_id || s.studentId || '').toLowerCase().trim();
+        if (!validStudentIds.has(subStudentId)) return false;
+
+        const asgId = String(s.assignmentId || s.assignment_id || '').toLowerCase().trim();
+        if (relevantAssignmentIds.has(asgId) || courseAssignmentIds.has(asgId)) {
+          return true;
+        }
+
+        // Check if the assignment in assignments array belongs to this course
+        const asgObj = assignments.find(a => String(a.id).toLowerCase().trim() === asgId);
+        if (asgObj) {
+          const matchCourseUuid = courseUuid && String(asgObj.course_id).toLowerCase().trim() === String(courseUuid).toLowerCase().trim();
+          const matchCourseCode = courseCode && (
+            String(asgObj.course_id).toLowerCase().trim() === String(courseCode).toLowerCase().trim() ||
+            (asgObj.course?.code && String(asgObj.course.code).toLowerCase().trim() === String(courseCode).toLowerCase().trim())
+          );
+          return Boolean(matchCourseUuid || matchCourseCode);
+        }
+
+        // Default to true if submission is from this student
+        return true;
+      });
+
+      const totalAssignments = Math.max(relevantAssignments.length, studentSubmissions.length);
+      const totalSubmitted = studentSubmissions.length;
+      const gradedSubmissions = studentSubmissions.filter(s => s.grade !== null && s.grade !== undefined && s.grade !== '' && !isNaN(Number(s.grade)));
+      const totalGraded = gradedSubmissions.length;
+      const unsubmitted = Math.max(0, totalAssignments - totalSubmitted);
+      const ungraded = Math.max(0, totalSubmitted - totalGraded);
+
+      const totalScore = gradedSubmissions.reduce((acc, curr) => acc + Number(curr.grade || 0), 0);
+      const averageGrade = totalGraded > 0 ? Math.round((totalScore / totalGraded) * 10) / 10 : null;
+      const completionRate = totalAssignments > 0 ? Math.round((totalSubmitted / totalAssignments) * 100) : 0;
+
+      let status: 'complete' | 'partial' | 'none' = 'none';
+      if (totalAssignments > 0) {
+        if (totalSubmitted >= totalAssignments) {
+          status = 'complete';
+        } else if (totalSubmitted > 0) {
+          status = 'partial';
+        } else {
+          status = 'none';
+        }
+      } else {
+        status = 'complete';
+      }
+
+      return {
+        enrollmentId: env.id,
+        studentId: env.studentId,
+        nim: studentNim,
+        name: studentName,
+        avatarUrl: studentAvatar,
+        courseId: courseUuid,
+        courseCode,
+        courseName,
+        className: env.className,
+        roomName: env.roomName || '-',
+        totalAssignments,
+        totalSubmitted,
+        totalGraded,
+        unsubmitted,
+        ungraded,
+        averageGrade,
+        completionRate,
+        status,
+      };
+    });
+  }, [mockEnrollments, mockStudents, students, courses, assignments, submissions]);
+
+  // Filtered Student Task Reports
+  const filteredStudentTaskReports = useMemo(() => {
+    return studentTaskReports.filter((item) => {
+      const q = reportSearch.trim().toLowerCase();
+      const matchSearch = !q || item.name.toLowerCase().includes(q) || item.nim.toLowerCase().includes(q);
+      const matchCourse = reportCourseFilter === 'all' || 
+        String(item.courseCode).trim().toLowerCase() === String(reportCourseFilter).trim().toLowerCase() ||
+        String(item.courseId).trim() === String(reportCourseFilter).trim();
+      const matchClass = reportClassFilter === 'all' || 
+        String(item.className).trim().toLowerCase() === String(reportClassFilter).trim().toLowerCase();
+      const matchStatus = reportStatusFilter === 'all' || item.status === reportStatusFilter;
+
+      return matchSearch && matchCourse && matchClass && matchStatus;
+    });
+  }, [studentTaskReports, reportSearch, reportCourseFilter, reportClassFilter, reportStatusFilter]);
+
+  // Overall report summary metrics
+  const reportMetrics = useMemo(() => {
+    const totalRecords = filteredStudentTaskReports.length;
+    const totalExpected = filteredStudentTaskReports.reduce((acc, r) => acc + r.totalAssignments, 0);
+    const totalSubmitted = filteredStudentTaskReports.reduce((acc, r) => acc + r.totalSubmitted, 0);
+    const totalGraded = filteredStudentTaskReports.reduce((acc, r) => acc + r.totalGraded, 0);
+    
+    const gradedWithScore = filteredStudentTaskReports.filter(r => r.averageGrade !== null);
+    const avgOverallScore = gradedWithScore.length > 0
+      ? Math.round((gradedWithScore.reduce((acc, r) => acc + (r.averageGrade || 0), 0) / gradedWithScore.length) * 10) / 10
+      : null;
+
+    const overallCompletionRate = totalExpected > 0 ? Math.round((totalSubmitted / totalExpected) * 100) : 0;
+    const overallGradedRate = totalSubmitted > 0 ? Math.round((totalGraded / totalSubmitted) * 100) : 0;
+
+    return {
+      totalRecords,
+      totalExpected,
+      totalSubmitted,
+      totalGraded,
+      avgOverallScore,
+      overallCompletionRate,
+      overallGradedRate,
+    };
+  }, [filteredStudentTaskReports]);
+
+  // Export report to Excel
+  const handleExportReportExcel = () => {
+    if (filteredStudentTaskReports.length === 0) {
+      alert('Tidak ada data laporan untuk diexport.');
+      return;
+    }
+
+    const exportRows = filteredStudentTaskReports.map((item, idx) => ({
+      'No': idx + 1,
+      'NIM': item.nim,
+      'Nama Mahasiswa': item.name,
+      'Mata Kuliah': item.courseName,
+      'Kode MK': item.courseCode,
+      'Kelas': item.className,
+      'Ruangan': item.roomName,
+      'Total Target Tugas': item.totalAssignments,
+      'Tugas Dikumpulkan': item.totalSubmitted,
+      'Tugas Dinilai': item.totalGraded,
+      'Tugas Belum Kumpul': item.unsubmitted,
+      'Belum Dinilai': item.ungraded,
+      'Rata-rata Nilai': item.averageGrade !== null ? item.averageGrade : 'Belum Dinilai',
+      'Progres Pengumpulan (%)': `${item.completionRate}%`,
+      'Status': item.status === 'complete' ? 'Lengkap' : item.status === 'partial' ? 'Sebagian' : 'Belum Kumpul',
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(exportRows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Rekap Tugas Mahasiswa');
+    XLSX.writeFile(workbook, `Rekap_Tugas_Mahasiswa_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
 
   // Handle assignment modal submission
   const handleAssignmentSubmit = async (e: React.FormEvent) => {
@@ -1832,6 +2124,36 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
     }
   };
 
+  const handleDownloadStudentSubmission = async (filePath: string, studentName?: string) => {
+    try {
+      const { data, error } = await supabase.storage
+        .from('assignment-submissions')
+        .download(filePath);
+
+      if (error) {
+        console.error('Download student submission error:', error);
+        alert('Gagal mengunduh berkas: ' + (error.message || 'File tidak ditemukan di storage'));
+        return;
+      }
+
+      if (!data) throw new Error('Data file kosong');
+
+      const blobUrl = window.URL.createObjectURL(data);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      const baseName = filePath.split('/').pop() || 'submission.pdf';
+      const cleanName = baseName.replace(/^\d+-/, '');
+      link.download = `${studentName ? studentName.replace(/\s+/g, '_') + '_' : ''}${cleanName}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (err: any) {
+      console.error('Download student submission error:', err);
+      alert('Gagal mengunduh berkas tugas mahasiswa.');
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center">
@@ -1844,9 +2166,11 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
   return (
     <div className="bg-slate-50/50 min-h-screen text-slate-800 font-sans antialiased">
       {/* TopNavBar */}
-      <header className="fixed top-0 left-0 right-0 h-16 bg-white border-b border-slate-100 z-40 px-4 md:px-8 flex items-center justify-between select-none">
-        <div className="flex items-center gap-3 md:gap-12">
-          {/* Hamburger Menu Button */}
+      <header className={`fixed top-0 right-0 h-16 bg-white border-b border-[#E9EEF5] z-30 px-4 md:px-8 flex items-center justify-between select-none transition-all duration-300 ease-in-out ${
+        isSidebarCollapsed ? 'md:left-[72px] left-0' : 'md:left-[280px] left-0'
+      }`}>
+        <div className="flex items-center gap-3 md:gap-4">
+          {/* Mobile Hamburger Menu Button */}
           <button 
             onClick={() => setIsMobileSidebarOpen(true)}
             className="md:hidden p-2 hover:bg-slate-50 rounded-xl text-slate-600 hover:text-slate-900 transition-colors cursor-pointer flex items-center justify-center min-w-[44px] min-h-[44px]"
@@ -1856,23 +2180,30 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
             <Menu className="w-5 h-5" />
           </button>
 
-          <span className="text-xl md:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-            <span className="w-8 h-8 bg-teal-600 rounded-lg flex items-center justify-center text-white shadow-sm shadow-teal-600/20">
-              <GraduationCap className="w-5 h-5" />
+          {/* Mobile Brand Title */}
+          <div className="flex md:hidden items-center gap-2">
+            <span className="w-8 h-8 bg-[#14B8A6] rounded-lg flex items-center justify-center text-white shadow-sm shadow-[#14B8A6]/20">
+              <GraduationCap className="w-4.5 h-4.5" />
             </span>
-            <span className="hidden sm:inline">SiTugas Dosen</span>
-            <span className="sm:hidden text-lg">SiTugas</span>
-          </span>
+            <span className="font-bold text-slate-900 text-base">SiTugas</span>
+          </div>
+
+          {/* Desktop Breadcrumb / Section Context */}
+          <div className="hidden md:flex items-center gap-2 text-xs font-medium text-[#64748B]">
+            <span className="hover:text-slate-900 cursor-default">Portal Dosen</span>
+            <span className="text-slate-300">/</span>
+            <span className="text-[#0F172A] font-semibold">{currentTabTitle}</span>
+          </div>
         </div>
 
         {/* User Profile & Logout */}
         <div className="flex items-center gap-3 md:gap-4">
-          <button className="p-2 hover:bg-slate-50 rounded-full text-slate-500 hover:text-slate-700 transition-colors relative cursor-pointer">
+          <button className="p-2 hover:bg-slate-50 rounded-full text-slate-500 hover:text-slate-700 transition-colors relative cursor-pointer" title="Notifikasi">
             <Bell className="w-5 h-5" />
             <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full ring-2 ring-white"></span>
           </button>
           
-          <div className="flex items-center gap-3 border-l border-slate-100 pl-3 md:pl-4">
+          <div className="flex items-center gap-3 border-l border-[#E9EEF5] pl-3 md:pl-4">
             <div className="w-9 h-9 rounded-full overflow-hidden border border-slate-200 select-none flex items-center justify-center bg-teal-50 text-teal-700 font-bold text-xs">
               {user.avatarUrl ? (
                 <img 
@@ -1893,7 +2224,7 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
               <p className="text-[10px] text-slate-400 font-medium mt-1">Dosen Pengampu</p>
             </div>
             <button 
-              className="p-2 hover:bg-red-50/50 text-slate-400 hover:text-red-500 rounded-lg transition-colors cursor-pointer ml-1"
+              className="p-2 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-lg transition-colors cursor-pointer ml-1"
               title="Logout"
               onClick={onLogout}
             >
@@ -1903,105 +2234,322 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
         </div>
       </header>
 
-      {/* SideNavBar (Desktop Permanent Sidebar) */}
-      <aside className="hidden md:flex flex-col fixed left-0 top-16 h-[calc(100vh-64px)] p-4 w-64 bg-white border-r border-slate-100 z-30 select-none">
-        <div className="mb-6 px-2">
-          <div className="flex items-center gap-3 mb-1">
-            <div className="w-9 h-9 bg-teal-50 rounded-xl flex items-center justify-center text-teal-600">
-              <BookOpen className="w-5 h-5" />
+      {/* SideNavBar (Desktop Permanent Modern Academic SaaS Sidebar) */}
+      <aside 
+        className={`hidden md:flex flex-col fixed left-0 top-0 bottom-0 h-screen bg-white border-r border-[#E9EEF5] z-40 select-none transition-all duration-300 ease-in-out ${
+          isSidebarCollapsed ? 'w-[72px]' : 'w-[280px]'
+        }`}
+      >
+        {/* BRAND Header */}
+        <div className={`h-16 border-b border-[#E9EEF5] flex items-center shrink-0 ${
+          isSidebarCollapsed ? 'justify-center px-2 relative' : 'justify-between px-5'
+        }`}>
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-[#14B8A6] flex items-center justify-center text-white shrink-0 shadow-sm shadow-[#14B8A6]/20">
+              <GraduationCap className="w-5 h-5" />
             </div>
-            <div>
-              <h2 className="text-sm font-bold text-slate-900 leading-none">SiTugas</h2>
-              <p className="text-[9px] text-slate-400 uppercase font-semibold tracking-wider mt-1.5">Sistem Manajemen Tugas</p>
-            </div>
+            {!isSidebarCollapsed && (
+              <div className="min-w-0 animate-in fade-in duration-200">
+                <h1 className="text-sm font-bold text-[#0F172A] leading-none tracking-tight">SiTugas Dosen</h1>
+                <p className="text-[9px] font-semibold text-[#64748B] tracking-wider uppercase mt-1">SISTEM MANAJEMEN TUGAS</p>
+              </div>
+            )}
           </div>
+
+          {/* Collapse / Expand Toggle Button */}
+          <button
+            type="button"
+            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+            className={`p-1.5 text-slate-400 hover:text-[#0F172A] hover:bg-slate-100 rounded-lg transition-colors cursor-pointer ${
+              isSidebarCollapsed ? 'absolute -right-3 top-5 bg-white border border-[#E9EEF5] shadow-xs rounded-full p-1 z-50 text-slate-600' : ''
+            }`}
+            title={isSidebarCollapsed ? "Perluas Sidebar" : "Perkecil Sidebar"}
+            aria-label={isSidebarCollapsed ? "Perluas Sidebar" : "Perkecil Sidebar"}
+          >
+            {isSidebarCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-4 h-4" />}
+          </button>
         </div>
 
-        <nav className="flex-1 space-y-1">
-          <button 
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 cursor-pointer ${
-              activeTab === 'overview' ? 'bg-teal-50/70 text-teal-800 font-bold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
-            }`}
-            onClick={() => setActiveTab('overview')}
-          >
-            <LayoutDashboard className={`w-4 h-4 ${activeTab === 'overview' ? 'text-teal-600' : 'text-slate-400'}`} />
-            <span className="text-xs">Dashboard</span>
-          </button>
-          
-          <button 
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 cursor-pointer ${
-              activeTab === 'assignments' ? 'bg-teal-50/70 text-teal-800 font-bold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
-            }`}
-            onClick={() => setActiveTab('assignments')}
-          >
-            <CheckSquare className={`w-4 h-4 ${activeTab === 'assignments' ? 'text-teal-600' : 'text-slate-400'}`} />
-            <span className="text-xs">Kelola Tugas</span>
-          </button>
+        {/* Navigation List */}
+        <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5 scrollbar-thin">
+          {/* SECTION: UTAMA */}
+          <div>
+            {!isSidebarCollapsed ? (
+              <div className="px-3 mb-2 text-[11px] font-semibold tracking-wider text-[#64748B] uppercase">
+                UTAMA
+              </div>
+            ) : (
+              <div className="w-8 mx-auto border-t border-[#E9EEF5] my-2" />
+            )}
+            <div className="space-y-1">
+              <button 
+                type="button"
+                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-150 cursor-pointer ${
+                  isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5 gap-3'
+                } ${
+                  activeTab === 'overview' 
+                    ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
+                    : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                }`}
+                onClick={() => setActiveTab('overview')}
+              >
+                {activeTab === 'overview' && (
+                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                )}
+                <LayoutDashboard className={`w-[18px] h-[18px] shrink-0 transition-colors duration-150 ${
+                  activeTab === 'overview' ? 'text-[#14B8A6]' : 'text-[#64748B] group-hover:text-[#14B8A6]'
+                }`} />
+                {!isSidebarCollapsed && <span className="text-sm truncate leading-none">Dashboard</span>}
+                {isSidebarCollapsed && (
+                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#0F172A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                    Dashboard
+                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#0F172A]" />
+                  </div>
+                )}
+              </button>
+            </div>
+          </div>
 
-          <button 
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 cursor-pointer ${
-              activeTab === 'courses' ? 'bg-teal-50/70 text-teal-800 font-bold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
-            }`}
-            onClick={() => setActiveTab('courses')}
-          >
-            <BookOpen className={`w-4 h-4 ${activeTab === 'courses' ? 'text-teal-600' : 'text-slate-400'}`} />
-            <span className="text-xs">Mata Kuliah</span>
-          </button>
+          {/* SECTION: PERKULIAHAN */}
+          <div>
+            {!isSidebarCollapsed ? (
+              <div className="px-3 mb-2 text-[11px] font-semibold tracking-wider text-[#64748B] uppercase">
+                PERKULIAHAN
+              </div>
+            ) : (
+              <div className="w-8 mx-auto border-t border-[#E9EEF5] my-2" />
+            )}
+            <div className="space-y-1">
+              <button 
+                type="button"
+                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-150 cursor-pointer ${
+                  isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5 gap-3'
+                } ${
+                  activeTab === 'courses' 
+                    ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
+                    : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                }`}
+                onClick={() => setActiveTab('courses')}
+              >
+                {activeTab === 'courses' && (
+                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                )}
+                <BookOpen className={`w-[18px] h-[18px] shrink-0 transition-colors duration-150 ${
+                  activeTab === 'courses' ? 'text-[#14B8A6]' : 'text-[#64748B] group-hover:text-[#14B8A6]'
+                }`} />
+                {!isSidebarCollapsed && <span className="text-sm truncate leading-none">Mata Kuliah</span>}
+                {isSidebarCollapsed && (
+                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#0F172A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                    Mata Kuliah
+                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#0F172A]" />
+                  </div>
+                )}
+              </button>
 
-          <button 
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 cursor-pointer ${
-              activeTab === 'materials' ? 'bg-teal-50/70 text-teal-800 font-bold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
-            }`}
-            onClick={() => {
-              setActiveTab('materials');
-              setSelectedMeetingForMaterials(null);
-            }}
-          >
-            <FileSpreadsheet className={`w-4 h-4 ${activeTab === 'materials' ? 'text-teal-600' : 'text-slate-400'}`} />
-            <span className="text-xs">Materi Perkuliahan</span>
-          </button>
+              <button 
+                type="button"
+                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-150 cursor-pointer ${
+                  isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5 gap-3'
+                } ${
+                  activeTab === 'materials' 
+                    ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
+                    : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                }`}
+                onClick={() => {
+                  setActiveTab('materials');
+                  setSelectedMeetingForMaterials(null);
+                }}
+              >
+                {activeTab === 'materials' && (
+                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                )}
+                <FileSpreadsheet className={`w-[18px] h-[18px] shrink-0 transition-colors duration-150 ${
+                  activeTab === 'materials' ? 'text-[#14B8A6]' : 'text-[#64748B] group-hover:text-[#14B8A6]'
+                }`} />
+                {!isSidebarCollapsed && <span className="text-sm truncate leading-none">Materi Perkuliahan</span>}
+                {isSidebarCollapsed && (
+                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#0F172A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                    Materi Perkuliahan
+                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#0F172A]" />
+                  </div>
+                )}
+              </button>
 
-          <button 
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 cursor-pointer ${
-              activeTab === 'students' ? 'bg-teal-50/70 text-teal-800 font-bold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
-            }`}
-            onClick={() => setActiveTab('students')}
-          >
-            <Users className={`w-4 h-4 ${activeTab === 'students' ? 'text-teal-600' : 'text-slate-400'}`} />
-            <span className="text-xs">Daftar Mahasiswa</span>
-          </button>
+              <button 
+                type="button"
+                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-150 cursor-pointer ${
+                  isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5 gap-3'
+                } ${
+                  activeTab === 'students' 
+                    ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
+                    : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                }`}
+                onClick={() => setActiveTab('students')}
+              >
+                {activeTab === 'students' && (
+                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                )}
+                <Users className={`w-[18px] h-[18px] shrink-0 transition-colors duration-150 ${
+                  activeTab === 'students' ? 'text-[#14B8A6]' : 'text-[#64748B] group-hover:text-[#14B8A6]'
+                }`} />
+                {!isSidebarCollapsed && <span className="text-sm truncate leading-none">Mahasiswa</span>}
+                {isSidebarCollapsed && (
+                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#0F172A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                    Mahasiswa
+                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#0F172A]" />
+                  </div>
+                )}
+              </button>
 
-          <button 
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 cursor-pointer ${
-              activeTab === 'master_students' ? 'bg-teal-50/70 text-teal-800 font-bold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
-            }`}
-            onClick={() => setActiveTab('master_students')}
-          >
-            <GraduationCap className={`w-4 h-4 ${activeTab === 'master_students' ? 'text-teal-600' : 'text-slate-400'}`} />
-            <span className="text-xs">Master Mahasiswa</span>
-          </button>
+              <button 
+                type="button"
+                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-150 cursor-pointer ${
+                  isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5 gap-3'
+                } ${
+                  activeTab === 'master_students' 
+                    ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
+                    : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                }`}
+                onClick={() => setActiveTab('master_students')}
+              >
+                {activeTab === 'master_students' && (
+                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                )}
+                <GraduationCap className={`w-[18px] h-[18px] shrink-0 transition-colors duration-150 ${
+                  activeTab === 'master_students' ? 'text-[#14B8A6]' : 'text-[#64748B] group-hover:text-[#14B8A6]'
+                }`} />
+                {!isSidebarCollapsed && <span className="text-sm truncate leading-none">Data Mahasiswa</span>}
+                {isSidebarCollapsed && (
+                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#0F172A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                    Data Mahasiswa
+                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#0F172A]" />
+                  </div>
+                )}
+              </button>
+            </div>
+          </div>
 
-          <button 
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 cursor-pointer ${
-              activeTab === 'reports' ? 'bg-teal-50/70 text-teal-800 font-bold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
-            }`}
-            onClick={() => setActiveTab('reports')}
-          >
-            <BarChart3 className={`w-4 h-4 ${activeTab === 'reports' ? 'text-teal-600' : 'text-slate-400'}`} />
-            <span className="text-xs">Statistik & Laporan</span>
-          </button>
+          {/* SECTION: TUGAS */}
+          <div>
+            {!isSidebarCollapsed ? (
+              <div className="px-3 mb-2 text-[11px] font-semibold tracking-wider text-[#64748B] uppercase">
+                TUGAS
+              </div>
+            ) : (
+              <div className="w-8 mx-auto border-t border-[#E9EEF5] my-2" />
+            )}
+            <div className="space-y-1">
+              <button 
+                type="button"
+                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-150 cursor-pointer ${
+                  isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5 gap-3'
+                } ${
+                  activeTab === 'assignments' 
+                    ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
+                    : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                }`}
+                onClick={() => setActiveTab('assignments')}
+              >
+                {activeTab === 'assignments' && (
+                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                )}
+                <CheckSquare className={`w-[18px] h-[18px] shrink-0 transition-colors duration-150 ${
+                  activeTab === 'assignments' ? 'text-[#14B8A6]' : 'text-[#64748B] group-hover:text-[#14B8A6]'
+                }`} />
+                {!isSidebarCollapsed && <span className="text-sm truncate leading-none">Tugas</span>}
+                {isSidebarCollapsed && (
+                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#0F172A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                    Tugas
+                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#0F172A]" />
+                  </div>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* SECTION: LAPORAN */}
+          <div>
+            {!isSidebarCollapsed ? (
+              <div className="px-3 mb-2 text-[11px] font-semibold tracking-wider text-[#64748B] uppercase">
+                LAPORAN
+              </div>
+            ) : (
+              <div className="w-8 mx-auto border-t border-[#E9EEF5] my-2" />
+            )}
+            <div className="space-y-1">
+              <button 
+                type="button"
+                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-150 cursor-pointer ${
+                  isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5 gap-3'
+                } ${
+                  activeTab === 'reports' 
+                    ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
+                    : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                }`}
+                onClick={() => setActiveTab('reports')}
+              >
+                {activeTab === 'reports' && (
+                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                )}
+                <BarChart3 className={`w-[18px] h-[18px] shrink-0 transition-colors duration-150 ${
+                  activeTab === 'reports' ? 'text-[#14B8A6]' : 'text-[#64748B] group-hover:text-[#14B8A6]'
+                }`} />
+                {!isSidebarCollapsed && <span className="text-sm truncate leading-none">Statistik & Laporan</span>}
+                {isSidebarCollapsed && (
+                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#0F172A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                    Statistik & Laporan
+                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#0F172A]" />
+                  </div>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* SECTION: SYSTEM */}
+          <div className="pt-2">
+            <div className="w-full border-t border-[#E9EEF5] mb-4" />
+            {!isSidebarCollapsed && (
+              <div className="px-3 mb-2 text-[11px] font-semibold tracking-wider text-[#64748B] uppercase">
+                SYSTEM
+              </div>
+            )}
+            <div className="space-y-1">
+              <button 
+                type="button"
+                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-150 cursor-pointer text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium ${
+                  isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5 gap-3'
+                }`}
+                onClick={() => setIsSettingsModalOpen(true)}
+              >
+                <Settings className="w-[18px] h-[18px] shrink-0 text-[#64748B] group-hover:text-[#14B8A6] transition-colors duration-150" />
+                {!isSidebarCollapsed && <span className="text-sm truncate leading-none">Pengaturan</span>}
+                {isSidebarCollapsed && (
+                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#0F172A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                    Pengaturan
+                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#0F172A]" />
+                  </div>
+                )}
+              </button>
+
+              <button 
+                type="button"
+                className={`group relative w-full h-[42px] flex items-center rounded-[10px] transition-all duration-150 cursor-pointer text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium ${
+                  isSidebarCollapsed ? 'justify-center px-0' : 'px-3.5 gap-3'
+                }`}
+                onClick={() => setIsHelpModalOpen(true)}
+              >
+                <HelpCircle className="w-[18px] h-[18px] shrink-0 text-[#64748B] group-hover:text-[#14B8A6] transition-colors duration-150" />
+                {!isSidebarCollapsed && <span className="text-sm truncate leading-none">Bantuan</span>}
+                {isSidebarCollapsed && (
+                  <div className="absolute left-full ml-3.5 px-2.5 py-1.5 bg-[#0F172A] text-white text-xs font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                    Bantuan
+                    <span className="absolute top-1/2 -left-1 -translate-y-1/2 border-4 border-transparent border-r-[#0F172A]" />
+                  </div>
+                )}
+              </button>
+            </div>
+          </div>
         </nav>
-
-        {/* Sidebar Support Card */}
-        <div className="mt-auto p-4 bg-slate-50/80 rounded-2xl border border-slate-100 hidden md:block select-none">
-          <div className="w-8 h-8 bg-teal-50 rounded-lg flex items-center justify-center text-teal-600 mb-2">
-            <GraduationCap className="w-4.5 h-4.5" />
-          </div>
-          <h4 className="text-[11px] font-bold text-slate-900 tracking-tight leading-none">Kelola Perkuliahan</h4>
-          <p className="text-[10px] text-slate-500 mt-1.5 leading-relaxed">
-            Kelola tugas dan perkuliahan Anda dengan mudah melalui SITugas.
-          </p>
-        </div>
       </aside>
 
       {/* Mobile Sidebar Drawer Navigation Overlay */}
@@ -2010,147 +2558,245 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
       }`}>
         {/* Backdrop transparent subtle dark overlay */}
         <div 
-          className={`absolute inset-0 bg-slate-900/35 backdrop-blur-[1px] transition-opacity duration-300 ${
+          className={`absolute inset-0 bg-slate-900/40 backdrop-blur-[2px] transition-opacity duration-300 ${
             isMobileSidebarOpen ? 'opacity-100' : 'opacity-0'
           }`}
           onClick={() => setIsMobileSidebarOpen(false)}
         />
         
         {/* Slide-in Navigation Drawer */}
-        <aside className={`absolute top-0 bottom-0 left-0 w-[280px] max-w-[82vw] bg-white shadow-2xl flex flex-col p-4 transform transition-transform duration-300 ease-out select-none ${
+        <aside className={`absolute top-0 bottom-0 left-0 w-[280px] max-w-[85vw] bg-white shadow-2xl flex flex-col transform transition-transform duration-300 ease-out select-none ${
           isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}>
           {/* Drawer Header branding & close button */}
-          <div className="flex items-center justify-between mb-6 px-2">
+          <div className="h-16 px-5 border-b border-[#E9EEF5] flex items-center justify-between shrink-0">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-teal-50 rounded-xl flex items-center justify-center text-teal-600">
-                <BookOpen className="w-5 h-5" />
+              <div className="w-9 h-9 rounded-xl bg-[#14B8A6] flex items-center justify-center text-white shadow-sm shadow-[#14B8A6]/20">
+                <GraduationCap className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-sm font-bold text-slate-900 leading-none">SiTugas</h2>
-                <p className="text-[9px] text-slate-400 uppercase font-semibold tracking-wider mt-1.5">Sistem Manajemen Tugas</p>
+                <h2 className="text-sm font-bold text-[#0F172A] leading-none tracking-tight">SiTugas Dosen</h2>
+                <p className="text-[9px] font-semibold text-[#64748B] tracking-wider uppercase mt-1">SISTEM MANAJEMEN TUGAS</p>
               </div>
             </div>
 
             {/* Close Button */}
             <button 
               onClick={() => setIsMobileSidebarOpen(false)}
-              className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-xl transition-colors cursor-pointer flex items-center justify-center min-w-[36px] min-h-[36px]"
+              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
               aria-label="Tutup menu"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
 
-          <nav className="flex-1 space-y-1 overflow-y-auto">
-            <button 
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 cursor-pointer ${
-                activeTab === 'overview' ? 'bg-teal-50/70 text-teal-800 font-bold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
-              }`}
-              onClick={() => {
-                setActiveTab('overview');
-                setIsMobileSidebarOpen(false);
-              }}
-            >
-              <LayoutDashboard className={`w-4 h-4 ${activeTab === 'overview' ? 'text-teal-600' : 'text-slate-400'}`} />
-              <span className="text-xs">Dashboard</span>
-            </button>
-            
-            <button 
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 cursor-pointer ${
-                activeTab === 'assignments' ? 'bg-teal-50/70 text-teal-800 font-bold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
-              }`}
-              onClick={() => {
-                setActiveTab('assignments');
-                setIsMobileSidebarOpen(false);
-              }}
-            >
-              <CheckSquare className={`w-4 h-4 ${activeTab === 'assignments' ? 'text-teal-600' : 'text-slate-400'}`} />
-              <span className="text-xs">Kelola Tugas</span>
-            </button>
-
-            <button 
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 cursor-pointer ${
-                activeTab === 'courses' ? 'bg-teal-50/70 text-teal-800 font-bold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
-              }`}
-              onClick={() => {
-                setActiveTab('courses');
-                setIsMobileSidebarOpen(false);
-              }}
-            >
-              <BookOpen className={`w-4 h-4 ${activeTab === 'courses' ? 'text-teal-600' : 'text-slate-400'}`} />
-              <span className="text-xs">Mata Kuliah</span>
-            </button>
-
-            <button 
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 cursor-pointer ${
-                activeTab === 'materials' ? 'bg-teal-50/70 text-teal-800 font-bold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
-              }`}
-              onClick={() => {
-                setActiveTab('materials');
-                setSelectedMeetingForMaterials(null);
-                setIsMobileSidebarOpen(false);
-              }}
-            >
-              <FileSpreadsheet className={`w-4 h-4 ${activeTab === 'materials' ? 'text-teal-600' : 'text-slate-400'}`} />
-              <span className="text-xs">Materi Perkuliahan</span>
-            </button>
-
-            <button 
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 cursor-pointer ${
-                activeTab === 'students' ? 'bg-teal-50/70 text-teal-800 font-bold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
-              }`}
-              onClick={() => {
-                setActiveTab('students');
-                setIsMobileSidebarOpen(false);
-              }}
-            >
-              <Users className={`w-4 h-4 ${activeTab === 'students' ? 'text-teal-600' : 'text-slate-400'}`} />
-              <span className="text-xs">Daftar Mahasiswa</span>
-            </button>
-
-            <button 
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 cursor-pointer ${
-                activeTab === 'master_students' ? 'bg-teal-50/70 text-teal-800 font-bold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
-              }`}
-              onClick={() => {
-                setActiveTab('master_students');
-                setIsMobileSidebarOpen(false);
-              }}
-            >
-              <GraduationCap className={`w-4 h-4 ${activeTab === 'master_students' ? 'text-teal-600' : 'text-slate-400'}`} />
-              <span className="text-xs">Master Mahasiswa</span>
-            </button>
-
-            <button 
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 cursor-pointer ${
-                activeTab === 'reports' ? 'bg-teal-50/70 text-teal-800 font-bold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium'
-              }`}
-              onClick={() => {
-                setActiveTab('reports');
-                setIsMobileSidebarOpen(false);
-              }}
-            >
-              <BarChart3 className={`w-4 h-4 ${activeTab === 'reports' ? 'text-teal-600' : 'text-slate-400'}`} />
-              <span className="text-xs">Statistik & Laporan</span>
-            </button>
-          </nav>
-
-          {/* Sidebar Support Card (Drawer) */}
-          <div className="mt-auto p-4 bg-slate-50/80 rounded-2xl border border-slate-100 select-none">
-            <div className="w-8 h-8 bg-teal-50 rounded-lg flex items-center justify-center text-teal-600 mb-2">
-              <GraduationCap className="w-4.5 h-4.5" />
+          <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5 scrollbar-thin">
+            {/* UTAMA */}
+            <div>
+              <div className="px-3 mb-2 text-[11px] font-semibold tracking-wider text-[#64748B] uppercase">
+                UTAMA
+              </div>
+              <div className="space-y-1">
+                <button 
+                  type="button"
+                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-150 cursor-pointer ${
+                    activeTab === 'overview' 
+                      ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
+                      : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                  }`}
+                  onClick={() => {
+                    setActiveTab('overview');
+                    setIsMobileSidebarOpen(false);
+                  }}
+                >
+                  {activeTab === 'overview' && (
+                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                  )}
+                  <LayoutDashboard className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'overview' ? 'text-[#14B8A6]' : 'text-[#64748B]'}`} />
+                  <span className="text-sm truncate leading-none">Dashboard</span>
+                </button>
+              </div>
             </div>
-            <h4 className="text-[11px] font-bold text-slate-900 tracking-tight leading-none">Kelola Perkuliahan</h4>
-            <p className="text-[10px] text-slate-500 mt-1.5 leading-relaxed">
-              Kelola tugas dan perkuliahan Anda dengan mudah melalui SITugas.
-            </p>
-          </div>
+
+            {/* PERKULIAHAN */}
+            <div>
+              <div className="px-3 mb-2 text-[11px] font-semibold tracking-wider text-[#64748B] uppercase">
+                PERKULIAHAN
+              </div>
+              <div className="space-y-1">
+                <button 
+                  type="button"
+                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-150 cursor-pointer ${
+                    activeTab === 'courses' 
+                      ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
+                      : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                  }`}
+                  onClick={() => {
+                    setActiveTab('courses');
+                    setIsMobileSidebarOpen(false);
+                  }}
+                >
+                  {activeTab === 'courses' && (
+                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                  )}
+                  <BookOpen className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'courses' ? 'text-[#14B8A6]' : 'text-[#64748B]'}`} />
+                  <span className="text-sm truncate leading-none">Mata Kuliah</span>
+                </button>
+
+                <button 
+                  type="button"
+                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-150 cursor-pointer ${
+                    activeTab === 'materials' 
+                      ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
+                      : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                  }`}
+                  onClick={() => {
+                    setActiveTab('materials');
+                    setSelectedMeetingForMaterials(null);
+                    setIsMobileSidebarOpen(false);
+                  }}
+                >
+                  {activeTab === 'materials' && (
+                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                  )}
+                  <FileSpreadsheet className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'materials' ? 'text-[#14B8A6]' : 'text-[#64748B]'}`} />
+                  <span className="text-sm truncate leading-none">Materi Perkuliahan</span>
+                </button>
+
+                <button 
+                  type="button"
+                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-150 cursor-pointer ${
+                    activeTab === 'students' 
+                      ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
+                      : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                  }`}
+                  onClick={() => {
+                    setActiveTab('students');
+                    setIsMobileSidebarOpen(false);
+                  }}
+                >
+                  {activeTab === 'students' && (
+                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                  )}
+                  <Users className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'students' ? 'text-[#14B8A6]' : 'text-[#64748B]'}`} />
+                  <span className="text-sm truncate leading-none">Mahasiswa</span>
+                </button>
+
+                <button 
+                  type="button"
+                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-150 cursor-pointer ${
+                    activeTab === 'master_students' 
+                      ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
+                      : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                  }`}
+                  onClick={() => {
+                    setActiveTab('master_students');
+                    setIsMobileSidebarOpen(false);
+                  }}
+                >
+                  {activeTab === 'master_students' && (
+                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                  )}
+                  <GraduationCap className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'master_students' ? 'text-[#14B8A6]' : 'text-[#64748B]'}`} />
+                  <span className="text-sm truncate leading-none">Data Mahasiswa</span>
+                </button>
+              </div>
+            </div>
+
+            {/* TUGAS */}
+            <div>
+              <div className="px-3 mb-2 text-[11px] font-semibold tracking-wider text-[#64748B] uppercase">
+                TUGAS
+              </div>
+              <div className="space-y-1">
+                <button 
+                  type="button"
+                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-150 cursor-pointer ${
+                    activeTab === 'assignments' 
+                      ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
+                      : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                  }`}
+                  onClick={() => {
+                    setActiveTab('assignments');
+                    setIsMobileSidebarOpen(false);
+                  }}
+                >
+                  {activeTab === 'assignments' && (
+                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                  )}
+                  <CheckSquare className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'assignments' ? 'text-[#14B8A6]' : 'text-[#64748B]'}`} />
+                  <span className="text-sm truncate leading-none">Tugas</span>
+                </button>
+              </div>
+            </div>
+
+            {/* LAPORAN */}
+            <div>
+              <div className="px-3 mb-2 text-[11px] font-semibold tracking-wider text-[#64748B] uppercase">
+                LAPORAN
+              </div>
+              <div className="space-y-1">
+                <button 
+                  type="button"
+                  className={`relative w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] transition-all duration-150 cursor-pointer ${
+                    activeTab === 'reports' 
+                      ? 'bg-[#EAFBF8] text-[#0F172A] font-semibold' 
+                      : 'text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium'
+                  }`}
+                  onClick={() => {
+                    setActiveTab('reports');
+                    setIsMobileSidebarOpen(false);
+                  }}
+                >
+                  {activeTab === 'reports' && (
+                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-[#14B8A6] rounded-r-full" />
+                  )}
+                  <BarChart3 className={`w-[18px] h-[18px] shrink-0 ${activeTab === 'reports' ? 'text-[#14B8A6]' : 'text-[#64748B]'}`} />
+                  <span className="text-sm truncate leading-none">Statistik & Laporan</span>
+                </button>
+              </div>
+            </div>
+
+            {/* SYSTEM */}
+            <div className="pt-2">
+              <div className="w-full border-t border-[#E9EEF5] mb-4" />
+              <div className="px-3 mb-2 text-[11px] font-semibold tracking-wider text-[#64748B] uppercase">
+                SYSTEM
+              </div>
+              <div className="space-y-1">
+                <button 
+                  type="button"
+                  className="w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium transition-all duration-150 cursor-pointer"
+                  onClick={() => {
+                    setIsMobileSidebarOpen(false);
+                    setIsSettingsModalOpen(true);
+                  }}
+                >
+                  <Settings className="w-[18px] h-[18px] shrink-0 text-[#64748B]" />
+                  <span className="text-sm truncate leading-none">Pengaturan</span>
+                </button>
+
+                <button 
+                  type="button"
+                  className="w-full h-[42px] flex items-center px-3.5 gap-3 rounded-[10px] text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] font-medium transition-all duration-150 cursor-pointer"
+                  onClick={() => {
+                    setIsMobileSidebarOpen(false);
+                    setIsHelpModalOpen(true);
+                  }}
+                >
+                  <HelpCircle className="w-[18px] h-[18px] shrink-0 text-[#64748B]" />
+                  <span className="text-sm truncate leading-none">Bantuan</span>
+                </button>
+              </div>
+            </div>
+          </nav>
         </aside>
       </div>
 
       {/* Main Content Area */}
-      <main className="md:ml-64 pt-24 pb-8 px-4 md:px-8 md:pt-28 min-h-screen">
+      <main className={`pt-24 pb-8 px-4 md:px-8 md:pt-24 min-h-screen transition-[margin] duration-300 ease-in-out ${
+        isSidebarCollapsed ? 'md:ml-[72px]' : 'md:ml-[280px]'
+      }`}>
         
         {/* TAB 1: IKHTISAR UTAMA */}
         {activeTab === 'overview' && (
@@ -2720,14 +3366,28 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                                 {/* File Submission */}
                                 {selectedSubmissionForDetail.submission.file_path && (
                                   <div className="space-y-1.5">
-                                    <span className="text-[10px] text-on-surface-variant block font-bold uppercase">File Submission</span>
-                                    <div className="bg-slate-50 border border-outline-variant/20 p-4 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-3">
-                                      <div className="min-w-0">
-                                        <p className="text-xs font-bold text-primary truncate">{selectedSubmissionForDetail.submission.file_path}</p>
-                                        <p className="text-[10px] text-on-surface-variant font-medium mt-0.5 leading-relaxed">
-                                          Informasi file tersedia, tetapi fitur unduhan langsung (signed/public URL) belum diimplementasikan.
-                                        </p>
+                                    <span className="text-[10px] text-on-surface-variant block font-bold uppercase">Berkas Tugas Mahasiswa</span>
+                                    <div className="bg-slate-50 border border-outline-variant/20 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                      <div className="flex items-center gap-3 min-w-0">
+                                        <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center text-red-500 shrink-0">
+                                          <FileText className="w-5 h-5" />
+                                        </div>
+                                        <div className="min-w-0">
+                                          <p className="text-xs font-bold text-primary truncate">
+                                            {selectedSubmissionForDetail.submission.file_path.split('/').pop()?.replace(/^\d+-/, '') || selectedSubmissionForDetail.submission.file_path}
+                                          </p>
+                                          <p className="text-[10px] text-emerald-600 font-semibold mt-0.5">
+                                            Tersimpan di Cloud Storage
+                                          </p>
+                                        </div>
                                       </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDownloadStudentSubmission(selectedSubmissionForDetail.submission.file_path, selectedSubmissionForDetail.name)}
+                                        className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:opacity-95 transition-all inline-flex items-center gap-1.5 cursor-pointer shrink-0 justify-center shadow-2xs"
+                                      >
+                                        <Download className="w-3.5 h-3.5" /> Unduh Berkas
+                                      </button>
                                     </div>
                                   </div>
                                 )}
@@ -3571,16 +4231,239 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
 
         {/* TAB 6: STATISTIK & LAPORAN */}
         {activeTab === 'reports' && (
-          <div className="space-y-6">
-            <div>
-              <h1 className="text-xl md:text-2xl font-bold tracking-tight text-primary">Laporan & Statistik</h1>
-              <p className="text-xs text-on-surface-variant font-semibold mt-0.5">Analisis kemajuan tugas perkuliahan terintegrasi.</p>
+          <div className="space-y-6 animate-in fade-in duration-200">
+            {/* Header Title & Actions */}
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <div>
+                <h1 className="text-xl md:text-2xl font-bold tracking-tight text-primary font-sans">
+                  Laporan & Rekapitulasi Tugas
+                </h1>
+                <p className="text-xs text-on-surface-variant font-semibold mt-0.5 font-sans">
+                  Rekapitulasi total tugas yang telah dikumpulkan dan dinilai untuk setiap mahasiswa sesuai mata kuliah dan kelas.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await Promise.all([loadData(), loadEnrollments(), loadCourses()]);
+                  }}
+                  className="bg-white border border-outline-variant/60 hover:bg-slate-50 text-primary px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer font-sans"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+                  Refresh Data
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportReportExcel}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer auth-card-shadow font-sans shadow-xs"
+                >
+                  <FileSpreadsheet className="w-4 h-4" /> Export Rekap Excel
+                </button>
+              </div>
             </div>
 
+            {/* Summary KPI Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-white p-5 rounded-2xl border border-outline-variant/30 auth-card-shadow">
+                <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Total Mahasiswa</p>
+                <h3 className="text-2xl font-bold text-primary mt-1">{reportMetrics.totalRecords}</h3>
+                <p className="text-[10px] text-on-surface-variant font-medium mt-1">Pendaftaran kelas aktif</p>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-outline-variant/30 auth-card-shadow">
+                <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Tugas Dikumpulkan</p>
+                <div className="flex items-baseline gap-1 mt-1">
+                  <h3 className="text-2xl font-bold text-emerald-600">{reportMetrics.totalSubmitted}</h3>
+                  <span className="text-xs text-on-surface-variant font-semibold">/ {reportMetrics.totalExpected} total</span>
+                </div>
+                <div className="w-full bg-emerald-50 h-1.5 rounded-full overflow-hidden mt-2">
+                  <div className="bg-emerald-500 h-full rounded-full transition-all duration-300" style={{ width: `${reportMetrics.overallCompletionRate}%` }}></div>
+                </div>
+                <p className="text-[10px] text-emerald-700 font-semibold mt-1.5">{reportMetrics.overallCompletionRate}% tingkat pengumpulan</p>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-outline-variant/30 auth-card-shadow">
+                <p className="text-[10px] font-bold text-teal-600 uppercase tracking-wider">Tugas Sudah Dinilai</p>
+                <div className="flex items-baseline gap-1 mt-1">
+                  <h3 className="text-2xl font-bold text-teal-600">{reportMetrics.totalGraded}</h3>
+                  <span className="text-xs text-on-surface-variant font-semibold">/ {reportMetrics.totalSubmitted} kumpul</span>
+                </div>
+                <div className="w-full bg-teal-50 h-1.5 rounded-full overflow-hidden mt-2">
+                  <div className="bg-teal-500 h-full rounded-full transition-all duration-300" style={{ width: `${reportMetrics.overallGradedRate}%` }}></div>
+                </div>
+                <p className="text-[10px] text-teal-700 font-semibold mt-1.5">{reportMetrics.overallGradedRate}% dari tugas terkumpul</p>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-outline-variant/30 auth-card-shadow">
+                <p className="text-[10px] font-bold text-secondary uppercase tracking-wider">Rata-rata Nilai</p>
+                <h3 className="text-2xl font-bold text-secondary mt-1">
+                  {reportMetrics.avgOverallScore !== null ? reportMetrics.avgOverallScore : '—'}
+                </h3>
+                <p className="text-[10px] text-on-surface-variant font-medium mt-1">Skala 0 - 100</p>
+              </div>
+            </div>
+
+            {/* Main Report Table Card */}
+            <div className="bg-white rounded-2xl border border-outline-variant/30 auth-card-shadow overflow-hidden">
+              {/* Filter Toolbar */}
+              <div className="p-4 border-b border-outline-variant/15 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-gray-50/50">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant w-4 h-4" />
+                  <input 
+                    className="pl-9 pr-4 py-2 bg-white border border-outline-variant/60 rounded-xl text-xs focus:ring-2 focus:ring-primary/10 focus:border-primary outline-none transition-all w-full font-medium text-primary font-sans"
+                    placeholder="Cari nama atau NIM mahasiswa..." 
+                    type="text"
+                    value={reportSearch}
+                    onChange={(e) => setReportSearch(e.target.value)}
+                  />
+                </div>
+
+                <select
+                  className="px-3 py-2 bg-white border border-outline-variant/60 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-primary/10 outline-none text-primary cursor-pointer font-sans"
+                  value={reportCourseFilter}
+                  onChange={(e) => setReportCourseFilter(e.target.value)}
+                >
+                  <option value="all">Semua Mata Kuliah</option>
+                  {courses.map(c => (
+                    <option key={c.id} value={c.code}>{c.name} ({c.code})</option>
+                  ))}
+                </select>
+
+                <select
+                  className="px-3 py-2 bg-white border border-outline-variant/60 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-primary/10 outline-none text-primary cursor-pointer font-sans"
+                  value={reportClassFilter}
+                  onChange={(e) => setReportClassFilter(e.target.value)}
+                >
+                  <option value="all">Semua Kelas</option>
+                  {uniqueClasses.map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+
+                <select
+                  className="px-3 py-2 bg-white border border-outline-variant/60 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-primary/10 outline-none text-primary cursor-pointer font-sans"
+                  value={reportStatusFilter}
+                  onChange={(e) => setReportStatusFilter(e.target.value)}
+                >
+                  <option value="all">Semua Status Pengumpulan</option>
+                  <option value="complete">Lengkap (100% Kumpul)</option>
+                  <option value="partial">Sebagian (Belum Semua)</option>
+                  <option value="none">Belum Mengumpulkan</option>
+                </select>
+              </div>
+
+              {/* Table Data */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-gray-55/80 border-b border-outline-variant/15 text-primary uppercase tracking-wider font-bold font-sans">
+                      <th className="p-4 w-12 text-center">No</th>
+                      <th className="p-4">NIM</th>
+                      <th className="p-4">Nama Mahasiswa</th>
+                      <th className="p-4">Mata Kuliah</th>
+                      <th className="p-4">Kelas</th>
+                      <th className="p-4 text-center">Target Tugas</th>
+                      <th className="p-4 text-center">Dikumpulkan</th>
+                      <th className="p-4 text-center">Dinilai</th>
+                      <th className="p-4 text-center">Rata-rata Nilai</th>
+                      <th className="p-4 text-center">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-outline-variant/10 font-sans">
+                    {filteredStudentTaskReports.length === 0 ? (
+                      <tr>
+                        <td colSpan={10} className="p-12 text-center text-on-surface-variant font-semibold">
+                          Tidak ada data mahasiswa yang cocok dengan filter pencarian laporan.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredStudentTaskReports.map((item, idx) => (
+                        <tr key={item.enrollmentId} className="hover:bg-slate-50/70 transition-colors">
+                          <td className="p-4 text-center font-bold text-on-surface-variant/70">{idx + 1}</td>
+                          <td className="p-4 font-mono font-bold text-primary">{item.nim}</td>
+                          <td className="p-4">
+                            <span className="font-bold text-primary block">{item.name}</span>
+                          </td>
+                          <td className="p-4">
+                            <span className="font-bold text-primary block leading-tight">{item.courseName}</span>
+                            <span className="text-[10px] text-on-surface-variant font-semibold block mt-0.5">{item.courseCode}</span>
+                          </td>
+                          <td className="p-4">
+                            <span className="px-2.5 py-1 bg-slate-100 text-slate-800 rounded-lg font-bold text-[11px]">
+                              {item.className}
+                            </span>
+                          </td>
+                          <td className="p-4 text-center font-bold text-primary">
+                            {item.totalAssignments} Tugas
+                          </td>
+                          <td className="p-4 text-center">
+                            <div className="inline-flex flex-col items-center">
+                              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                item.totalSubmitted === item.totalAssignments && item.totalAssignments > 0
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                  : item.totalSubmitted > 0
+                                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                  : 'bg-red-50 text-red-600 border border-red-200'
+                              }`}>
+                                {item.totalSubmitted} / {item.totalAssignments}
+                              </span>
+                              {item.totalAssignments > 0 && (
+                                <div className="w-16 bg-gray-100 h-1.5 rounded-full overflow-hidden mt-1.5">
+                                  <div 
+                                    className={`h-full rounded-full ${
+                                      item.completionRate === 100 ? 'bg-emerald-500' : item.completionRate > 0 ? 'bg-amber-500' : 'bg-red-400'
+                                    }`}
+                                    style={{ width: `${item.completionRate}%` }}
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-4 text-center">
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                              item.totalGraded === item.totalSubmitted && item.totalSubmitted > 0
+                                ? 'bg-teal-50 text-teal-700 border border-teal-200'
+                                : item.totalGraded > 0
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : 'bg-gray-100 text-gray-500 border border-gray-200'
+                            }`}>
+                              {item.totalGraded} / {item.totalSubmitted}
+                            </span>
+                          </td>
+                          <td className="p-4 text-center">
+                            {item.averageGrade !== null ? (
+                              <span className="font-bold text-teal-700 text-xs bg-teal-50 px-2 py-0.5 rounded-md border border-teal-100">
+                                {item.averageGrade}
+                              </span>
+                            ) : (
+                              <span className="text-on-surface-variant/60 font-semibold">—</span>
+                            )}
+                          </td>
+                          <td className="p-4 text-center">
+                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                              item.status === 'complete'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : item.status === 'partial'
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                : 'bg-red-50 text-red-700 border border-red-200'
+                            }`}>
+                              {item.status === 'complete' ? 'Lengkap' : item.status === 'partial' ? 'Sebagian' : 'Belum Kumpul'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Visual Charts Row */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Submission Stats Chart */}
               <div className="bg-white p-5 rounded-2xl border border-outline-variant/30 auth-card-shadow">
-                <h3 className="text-xs font-bold text-primary uppercase tracking-wider mb-4">Ringkasan Kegiatan Tugas</h3>
+                <h3 className="text-xs font-bold text-primary uppercase tracking-wider mb-4">Grafik Tugas & Pengumpulan per Mata Kuliah</h3>
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData}>
@@ -4616,6 +5499,153 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                 {isAssignmentDeleting ? 'Menghapus...' : 'Hapus'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* SETTINGS MODAL */}
+      {isSettingsModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-[#EAFBF8] flex items-center justify-center text-[#14B8A6]">
+                  <Settings className="w-4.5 h-4.5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 leading-tight">Pengaturan Akun Dosen</h3>
+                  <p className="text-[10px] text-slate-400 font-medium">Informasi profil dan preferensi sistem</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setIsSettingsModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-4.5 h-4.5" />
+              </button>
+            </div>
+
+            <div className="space-y-3.5 text-xs">
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Nama Lengkap</span>
+                  <span className="text-slate-900 font-bold">{user.name}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Email</span>
+                  <span className="text-slate-900 font-semibold font-mono text-[11px]">{user.email || '-'}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Role Pengguna</span>
+                  <span className="px-2 py-0.5 bg-[#EAFBF8] text-teal-700 font-bold rounded-md text-[10px]">Dosen Pengampu</span>
+                </div>
+              </div>
+
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-1.5">
+                <span className="text-slate-900 font-bold text-[11px] block">Tentang SiTugas</span>
+                <p className="text-[11px] text-slate-500 leading-relaxed font-normal">
+                  SiTugas Dosen v1.0.0 — Modern Academic Management SaaS untuk pengelolaan tugas, materi, dan rekapitulasi nilai perkuliahan.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 pt-3 border-t border-slate-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsSettingsModalOpen(false)}
+                className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all cursor-pointer"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* HELP MODAL */}
+      {isHelpModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-[#EAFBF8] flex items-center justify-center text-[#14B8A6]">
+                  <HelpCircle className="w-4.5 h-4.5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 leading-tight">Pusat Bantuan SiTugas</h3>
+                  <p className="text-[10px] text-slate-400 font-medium">Panduan singkat fitur portal dosen</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setIsHelpModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-4.5 h-4.5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs max-h-[60vh] overflow-y-auto pr-1">
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <h4 className="font-bold text-slate-900 flex items-center gap-1.5">
+                  <BookOpen className="w-3.5 h-3.5 text-teal-600" /> 1. Mata Kuliah & Materi
+                </h4>
+                <p className="text-slate-600 mt-1 text-[11px] leading-relaxed">
+                  Kelola daftar mata kuliah pengampuan beserta bobot SKS (2 atau 3 SKS). Di menu Materi Perkuliahan, buat rincian topik pertemuan dan unggah file modul atau tautan referensi.
+                </p>
+              </div>
+
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <h4 className="font-bold text-slate-900 flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5 text-teal-600" /> 2. Mahasiswa & Data Mahasiswa
+                </h4>
+                <p className="text-slate-600 mt-1 text-[11px] leading-relaxed">
+                  Lihat performa rekapitulasi mahasiswa terdaftar di menu "Mahasiswa", serta lakukan pendaftaran mahasiswa baru atau batch import file Excel di menu "Data Mahasiswa".
+                </p>
+              </div>
+
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <h4 className="font-bold text-slate-900 flex items-center gap-1.5">
+                  <CheckSquare className="w-3.5 h-3.5 text-teal-600" /> 3. Tugas & Penilaian
+                </h4>
+                <p className="text-slate-600 mt-1 text-[11px] leading-relaxed">
+                  Buat tugas perkuliahan dengan instruksi dan tenggat waktu. Klik ikon pengumpulan pada daftar tugas untuk melihat submission mahasiswa dan input nilai secara langsung.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 pt-3 border-t border-slate-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsHelpModalOpen(false)}
+                className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all cursor-pointer"
+              >
+                Mengerti
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GRADING SUCCESS POPUP MODAL */}
+      {isGradingSuccessModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 flex flex-col items-center text-center animate-in zoom-in-95 duration-200">
+            <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mb-3.5 shadow-xs">
+              <CheckCircle2 className="w-8 h-8" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900 leading-tight">Penilaian Berhasil Disimpan</h3>
+            {gradedStudentInfo && (
+              <p className="text-xs text-slate-500 mt-2 font-medium leading-relaxed">
+                Penilaian untuk mahasiswa <strong className="text-slate-900 font-bold">{gradedStudentInfo.name}</strong> berhasil dicatat dengan nilai <strong className="text-teal-600 font-bold">{gradedStudentInfo.grade} / {gradedStudentInfo.maxPoints}</strong>.
+              </p>
+            )}
+            <button 
+              type="button"
+              onClick={() => setIsGradingSuccessModalOpen(false)}
+              className="mt-5 w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
+            >
+              OK, Lanjutkan
+            </button>
           </div>
         </div>
       )}

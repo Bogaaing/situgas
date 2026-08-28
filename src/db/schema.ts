@@ -7,7 +7,7 @@ export const users = pgTable('users', {
   uid: text('uid').notNull().unique(), // Firebase Auth UID
   email: text('email').notNull(),
   name: text('name').notNull(),
-  role: text('role').$type<'student' | 'lecturer'>().notNull(),
+  role: text('role').$type<'student' | 'lecturer' | 'admin'>().notNull(),
   avatarUrl: text('avatar_url'),
   idNumber: text('id_number'), // student ID number (e.g. #AF-2023-084)
   enrolledCourseCode: text('enrolled_course_code'), // Primary enrolled course for students
