@@ -1,20 +1,23 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# SITugas - Sistem Informasi Manajemen Tugas
 
-# Run and deploy your AI Studio app
+Platform manajemen tugas akademik modern berbasis web untuk Universitas Pamulang (UNPAM).
 
-This contains everything you need to run your app locally.
+## Fitur Utama
+- **Portal Mahasiswa**: Akses tugas, unggah submission, unduh materi, dan pantau nilai.
+- **Portal Dosen**: Kelola mata kuliah, buat tugas & kuis, unggah materi perkuliahan, dan penilaian mahasiswa.
+- **Portal Administrator**: Dashboard ringkasan akademik, manajemen data dosen, kontrol mata kuliah global, master mahasiswa, dan audit trail log.
+- **Supabase Authentication & RLS**: Autentikasi aman terintegrasi dengan Row Level Security (RLS) pada tabel `public.profiles`.
 
-View your app in AI Studio: https://ai.studio/apps/3f67aef9-9060-407e-be95-8489df6bf7c7
+## Menjalankan Proyek Secara Lokal
+```bash
+# 1. Install dependencies
+npm install
 
-## Run Locally
+# 2. Jalankan development server
+npm run dev
+```
 
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Build Production
+```bash
+npm run build
+```
