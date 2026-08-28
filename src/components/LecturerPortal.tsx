@@ -2864,61 +2864,7 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
               </button>
             </section>
 
-            {/* 2. Quick Action Horizontal Cards */}
-            <section className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-              {/* Action 1: Buat Tugas */}
-              <button
-                type="button"
-                onClick={openCreateModal}
-                className="bg-white p-3.5 sm:p-4 rounded-xl border border-[#E8EDF3] hover:border-[#142B4A]/20 hover:bg-[#F8FAFC] shadow-xs flex items-center gap-3 transition-all duration-200 cursor-pointer group text-left"
-              >
-                <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform duration-200">
-                  <CheckSquare className="w-4 h-4" />
-                </div>
-                <span className="text-xs font-semibold text-[#0F172A] group-hover:text-[#142B4A] truncate">Buat Tugas</span>
-              </button>
-
-              {/* Action 2: Tambah Materi */}
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('materials');
-                  setSelectedMeetingForMaterials(null);
-                }}
-                className="bg-white p-3.5 sm:p-4 rounded-xl border border-[#E8EDF3] hover:border-[#142B4A]/20 hover:bg-[#F8FAFC] shadow-xs flex items-center gap-3 transition-all duration-200 cursor-pointer group text-left"
-              >
-                <div className="w-9 h-9 rounded-lg bg-teal-50 text-teal-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform duration-200">
-                  <FileSpreadsheet className="w-4 h-4" />
-                </div>
-                <span className="text-xs font-semibold text-[#0F172A] group-hover:text-[#142B4A] truncate">Tambah Materi</span>
-              </button>
-
-              {/* Action 3: Tambah Mahasiswa */}
-              <button
-                type="button"
-                onClick={() => setActiveTab('master_students')}
-                className="bg-white p-3.5 sm:p-4 rounded-xl border border-[#E8EDF3] hover:border-[#142B4A]/20 hover:bg-[#F8FAFC] shadow-xs flex items-center gap-3 transition-all duration-200 cursor-pointer group text-left"
-              >
-                <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform duration-200">
-                  <UserPlus className="w-4 h-4" />
-                </div>
-                <span className="text-xs font-semibold text-[#0F172A] group-hover:text-[#142B4A] truncate">Tambah Mahasiswa</span>
-              </button>
-
-              {/* Action 4: Lihat Laporan */}
-              <button
-                type="button"
-                onClick={() => setActiveTab('reports')}
-                className="bg-white p-3.5 sm:p-4 rounded-xl border border-[#E8EDF3] hover:border-[#142B4A]/20 hover:bg-[#F8FAFC] shadow-xs flex items-center gap-3 transition-all duration-200 cursor-pointer group text-left"
-              >
-                <div className="w-9 h-9 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform duration-200">
-                  <BarChart3 className="w-4 h-4" />
-                </div>
-                <span className="text-xs font-semibold text-[#0F172A] group-hover:text-[#142B4A] truncate">Lihat Laporan</span>
-              </button>
-            </section>
-
-            {/* 3. Stats 4 Cards Grid */}
+            {/* Stats 4 Cards Grid */}
             <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {/* Card 1: TOTAL MAHASISWA */}
               <div className="bg-white p-5 rounded-2xl border border-[#E8EDF3] shadow-xs flex justify-between items-center relative overflow-hidden group hover:shadow-sm transition-all duration-200">
