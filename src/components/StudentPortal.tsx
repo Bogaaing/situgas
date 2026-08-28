@@ -549,16 +549,8 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
         }
 
         if (supabaseErr) {
-          console.warn('Supabase direct submission failed, attempting backend API proxy:', supabaseErr);
-          await apiRequest<any>('/api/submissions', {
-            method: 'POST',
-            body: JSON.stringify({
-              assignmentId: selectedAssignment.id,
-              submittedFile: finalFilePath,
-              submittedLink: activeSubmitTab === 'link' ? submissionLink : null,
-              submittedNote: submissionNote || null,
-            }),
-          });
+          console.error('Supabase direct submission failed:', supabaseErr);
+          throw new Error(supabaseErr.message || 'Gagal mengirimkan tugas ke database.');
         } else {
           // Also sync to local backend if running in dev environment (ignore error on static web hosting)
           apiRequest<any>('/api/submissions', {

@@ -1148,30 +1148,24 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
         .from('submissions')
         .update({
           grade: normalizedGrade,
-          feedback: normalizedFeedback,
+          feedback: normalizedFeedback || null,
           graded_at: new Date().toISOString(),
         })
         .eq('id', submissionId);
 
       if (gradeErr) {
-        console.warn('Supabase direct grading error, attempting API proxy:', gradeErr);
-        await apiRequest<any>(`/api/submissions/${submissionId}/grade`, {
-          method: 'PATCH',
-          body: JSON.stringify({
-            grade: normalizedGrade,
-            feedback: normalizedFeedback,
-          }),
-        });
-      } else {
-        // Also quietly notify local API proxy if running in local dev
-        apiRequest<any>(`/api/submissions/${submissionId}/grade`, {
-          method: 'PATCH',
-          body: JSON.stringify({
-            grade: normalizedGrade,
-            feedback: normalizedFeedback,
-          }),
-        }).catch(() => {});
+        console.error('Supabase direct grading error:', gradeErr);
+        throw new Error(gradeErr.message || 'Gagal menyimpan penilaian di database Supabase.');
       }
+
+      // Also quietly notify local API proxy if running in local dev (do not throw on failure)
+      apiRequest<any>(`/api/submissions/${submissionId}/grade`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          grade: normalizedGrade,
+          feedback: normalizedFeedback,
+        }),
+      }).catch(() => {});
 
       setGradedStudentInfo({
         name: selectedSubmissionForDetail.name,
