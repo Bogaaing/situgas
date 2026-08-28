@@ -2272,10 +2272,10 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
 
           {/* Mobile Brand Title */}
           <div className="flex md:hidden items-center gap-2">
-            <span className="w-8 h-8 bg-[#14B8A6] rounded-lg flex items-center justify-center text-white shadow-sm shadow-[#14B8A6]/20">
-              <GraduationCap className="w-4.5 h-4.5" />
+            <span className="w-8 h-8 bg-[#142B4A] rounded-lg flex items-center justify-center text-white shadow-sm shadow-[#142B4A]/20">
+              <GraduationCap className="w-4.5 h-4.5 text-white" />
             </span>
-            <span className="font-bold text-slate-900 text-base">SiTugas</span>
+            <span className="font-bold text-[#0F172A] text-base">SI Tugas</span>
           </div>
 
           {/* Desktop Breadcrumb / Section Context */}
