@@ -401,7 +401,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                     <input
                       className="w-full bg-transparent text-xs font-semibold text-[#0B1E3B] placeholder:text-[#94A3B8] outline-none"
                       id="admin-identifier"
-                      placeholder="admin@situgas.id atau username"
+                      placeholder="email@situgas.web.id"
                       type="text"
                       value={adminIdentifier}
                       onChange={(e) => setAdminIdentifier(e.target.value)}

@@ -640,10 +640,7 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
             className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-full transition-colors relative cursor-pointer"
             title="Notifikasi"
           >
-            <Bell className="w-5 h-5" />
-            <span className="absolute top-0.5 right-0.5 w-4 h-4 bg-red-500 text-white rounded-full text-[9px] font-bold flex items-center justify-center">
-              3
-            </span>
+            
           </button>
 
           <div className="w-8 h-8 rounded-full overflow-hidden bg-[#0F2747] text-white flex items-center justify-center font-bold text-xs select-none shadow-xs">
@@ -926,7 +923,7 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
                 {/* Welcome Section (Compact Greeting) */}
                 <div className="space-y-0.5 select-none pt-1">
                   <h1 className="text-xl sm:text-2xl font-bold text-[#0F172A] tracking-tight flex items-center gap-1.5">
-                    Selamat datang, {user.name}! <span className="inline-block">👋</span>
+                    Selamat datang, {user.name}! <span className="inline-block"></span>
                   </h1>
                   <p className="text-xs sm:text-sm font-semibold text-[#64748B]">
                     NIM: {user.idNumber || '-'}
