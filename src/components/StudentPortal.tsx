@@ -2,7 +2,8 @@ import React, { useState, useEffect, startTransition, useMemo } from 'react';
 import { 
   Bell, CheckCircle, ArrowRight, ArrowLeft, CloudUpload, FileText, 
   Link as LinkIcon, History, User as UserIcon, Calendar, Compass, FileCheck2, ClipboardList,
-  BookOpen, Loader2, Download, ExternalLink, FileSpreadsheet, Link2, AlertTriangle
+  BookOpen, Loader2, Download, ExternalLink, FileSpreadsheet, Link2, AlertTriangle,
+  GraduationCap, Users, MapPin, ChevronRight, Plus, X, CheckCircle2
 } from 'lucide-react';
 import { User, Assignment } from '../types';
 import { COURSES } from '../data';
@@ -59,6 +60,7 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
   const [showClosedModal, setShowClosedModal] = useState(false);
   const [closedModalTaskTitle, setClosedModalTaskTitle] = useState('');
+  const [isCourseModalOpen, setIsCourseModalOpen] = useState(false);
 
   // Get initials for student avatar (e.g. "Ahmad Asep" -> "AA", "Sarah Fauzi Wibawa" -> "SF")
   const getInitials = (name: string) => {
@@ -612,65 +614,65 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
   }
 
   return (
-    <div className="bg-background min-h-screen text-on-background flex flex-col">
+    <div className="bg-[#F7F9FC] min-h-screen text-[#0F172A] flex flex-col font-sans selection:bg-[#008F7A] selection:text-white">
       {/* Top Navigation Bar */}
-      <header className="fixed top-0 left-0 right-0 h-16 bg-white/90 backdrop-blur-md shadow-sm border-b border-outline-variant/10 z-40 px-4 md:px-8 flex justify-between items-center select-none">
-        <div className="flex items-center gap-3">
+      <header className="fixed top-0 left-0 right-0 h-16 bg-white/95 backdrop-blur-md border-b border-[#E5EAF1] z-40 px-4 sm:px-6 md:px-8 flex justify-between items-center select-none shadow-xs">
+        <div className="flex items-center gap-2.5">
           {selectedAssignment && (
             <button 
-              className="p-1.5 hover:bg-gray-100 rounded-lg text-on-surface-variant cursor-pointer transition-colors mr-1"
+              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-600 cursor-pointer transition-colors mr-0.5"
               onClick={() => setSelectedAssignment(null)}
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
           )}
-          <h1 className="text-lg md:text-xl font-bold text-primary tracking-tight">SITugas</h1>
-          {!selectedAssignment && activeCourseName && (
-            <span className="hidden sm:inline-block px-2.5 py-0.5 bg-secondary-container/30 text-on-secondary-container text-[11px] font-bold rounded-full border border-secondary-container/20">
-              {activeCourseName} - Kelas {activeClassName}
-            </span>
-          )}
+          <div className="w-8 h-8 rounded-xl bg-[#0F2747] text-white flex items-center justify-center shadow-xs select-none shrink-0">
+            <GraduationCap className="w-4 h-4" />
+          </div>
+          <h1 className="text-lg md:text-xl font-extrabold text-[#0F2747] tracking-tight select-none">
+            SITugas
+          </h1>
         </div>
         
-        <div className="flex items-center gap-4">
-          <span className="material-symbols-outlined text-on-surface-variant cursor-pointer p-1.5 hover:bg-gray-50 rounded-full transition-colors relative">
+        <div className="flex items-center gap-3 sm:gap-4">
+          <button 
+            type="button" 
+            className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-full transition-colors relative cursor-pointer"
+            title="Notifikasi"
+          >
             <Bell className="w-5 h-5" />
-            <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
-          </span>
-          <div className="flex items-center gap-3 border-l border-outline-variant/20 pl-4">
-            <div className="w-8 h-8 rounded-full overflow-hidden border border-outline-variant/30 bg-gradient-to-br from-[#0B2147] to-[#1E3A8A] text-white flex items-center justify-center font-bold text-xs select-none shadow-sm">
-              {user.avatarUrl ? (
-                <img 
-                  className="w-full h-full object-cover" 
-                  src={user.avatarUrl} 
-                  alt={user.name}
-                  referrerPolicy="no-referrer"
-                  onError={(e) => {
-                    (e.currentTarget as HTMLElement).style.display = 'none';
-                  }}
-                />
-              ) : (
-                <span>{getInitials(user.name)}</span>
-              )}
-            </div>
-            <div className="hidden sm:block text-left select-none">
-              <p className="text-xs font-bold text-primary">{user.name}</p>
-              {activeClassName && (
-                <p className="text-[10px] text-on-surface-variant font-medium">Kelas {activeClassName}</p>
-              )}
-            </div>
-            <button 
-              className="text-xs font-bold text-red-500 hover:bg-red-50 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
-              onClick={onLogout}
-            >
-              Logout
-            </button>
+            <span className="absolute top-0.5 right-0.5 w-4 h-4 bg-red-500 text-white rounded-full text-[9px] font-bold flex items-center justify-center">
+              3
+            </span>
+          </button>
+
+          <div className="w-8 h-8 rounded-full overflow-hidden bg-[#0F2747] text-white flex items-center justify-center font-bold text-xs select-none shadow-xs">
+            {user.avatarUrl ? (
+              <img 
+                className="w-full h-full object-cover" 
+                src={user.avatarUrl} 
+                alt={user.name}
+                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  (e.currentTarget as HTMLElement).style.display = 'none';
+                }}
+              />
+            ) : (
+              <span>{getInitials(user.name)}</span>
+            )}
           </div>
+
+          <button 
+            className="text-xs font-bold text-red-600 hover:text-red-700 px-1.5 py-1 rounded-lg transition-colors cursor-pointer"
+            onClick={onLogout}
+          >
+            Logout
+          </button>
         </div>
       </header>
 
       {/* Main Container */}
-      <main className="flex-grow pt-20 px-4 md:px-8 pb-28 max-w-lg sm:max-w-xl md:max-w-4xl mx-auto w-full space-y-6">
+      <main className="flex-grow pt-20 px-4 sm:px-5 pb-28 max-w-md sm:max-w-lg md:max-w-xl mx-auto w-full space-y-6 font-sans">
         {/* SUBMISSION FLOW COMPONENT SCREEN */}
         {selectedAssignment ? (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-200">
@@ -921,173 +923,294 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
             {/* MAIN TASKS TAB CONTENT */}
             {activeTab === 'tasks' && (
               <div className="space-y-6">
-                {/* Welcome Banner */}
-                <div className="bg-white p-5 rounded-2xl border border-outline-variant/30 auth-card-shadow flex flex-col md:flex-row md:items-center justify-between gap-4 select-none">
-                  <div>
-                    <h2 className="text-base font-bold text-primary">Selamat Datang, {user.name}!</h2>
-                    <p className="text-xs text-on-surface-variant font-semibold mt-0.5">NIM: {user.idNumber}</p>
-                  </div>
-                  <div className="text-xs text-on-surface-variant font-semibold bg-slate-50 px-3 py-1.5 rounded-xl border border-outline-variant/10">
-                    Sesi Mahasiswa Aktif
-                  </div>
+                {/* Welcome Section (Compact Greeting) */}
+                <div className="space-y-0.5 select-none pt-1">
+                  <h1 className="text-xl sm:text-2xl font-bold text-[#0F172A] tracking-tight flex items-center gap-1.5">
+                    Selamat datang, {user.name}! <span className="inline-block">👋</span>
+                  </h1>
+                  <p className="text-xs sm:text-sm font-semibold text-[#64748B]">
+                    NIM: {user.idNumber || '-'}
+                  </p>
                 </div>
 
                 {enrollments.length === 0 ? (
-                  <div className="bg-white p-8 rounded-2xl border border-outline-variant/30 auth-card-shadow text-center space-y-4">
-                    <div className="w-12 h-12 bg-gray-50 rounded-full flex items-center justify-center mx-auto text-on-surface-variant">
+                  <div className="bg-white p-8 rounded-[18px] border border-[#E5EAF1] shadow-xs text-center space-y-3">
+                    <div className="w-12 h-12 bg-slate-50 text-slate-400 rounded-full flex items-center justify-center mx-auto">
                       <ClipboardList className="w-6 h-6" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-bold text-primary">Belum ada mata kuliah yang terdaftar.</h3>
-                      <p className="text-xs text-on-surface-variant mt-1 font-medium">Silakan hubungi dosen atau admin akademik untuk pendaftaran mata kuliah.</p>
+                      <h3 className="text-sm font-bold text-[#0F172A]">Belum ada mata kuliah yang terdaftar.</h3>
+                      <p className="text-xs text-[#64748B] mt-1 font-medium">Silakan hubungi dosen atau admin akademik untuk pendaftaran mata kuliah.</p>
                     </div>
                   </div>
                 ) : (
                   <>
-                    {/* Enrolled Courses list */}
-                    <section className="space-y-3">
-                      <h3 className="text-xs font-bold text-primary uppercase tracking-wider px-1">Mata Kuliah Terdaftar</h3>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {enrollments.map((env) => {
-                          const isSelected = selectedEnrollment?.id === env.id;
-                          return (
-                            <div
-                              key={env.id}
-                              onClick={() => setSelectedEnrollment(env)}
-                              className={`p-4 rounded-xl border transition-all cursor-pointer select-none relative overflow-hidden flex flex-col justify-between h-36 ${
-                                isSelected
-                                  ? 'bg-white border-primary ring-2 ring-primary/15 shadow-md shadow-primary/5'
-                                  : 'bg-white border-outline-variant/30 hover:border-primary/20 shadow-sm hover:shadow-md'
-                              }`}
-                            >
-                              {isSelected && (
-                                <div className="absolute top-0 right-0 w-16 h-16 bg-primary/5 rounded-bl-full flex items-center justify-center pl-4 pb-4">
-                                  <span className="text-primary text-[10px] font-bold">Aktif</span>
-                                </div>
-                              )}
-                              <div>
-                                <h4 className="text-xs md:text-sm font-bold text-primary line-clamp-2 pr-10 leading-snug">
-                                  {env.courseName}
-                                </h4>
-                                <p className="text-[10px] text-on-surface-variant font-semibold mt-1">Kode MK: {env.courseCode}</p>
-                              </div>
-                              
-                              <div className="grid grid-cols-2 gap-2 pt-2 border-t border-outline-variant/10 text-[10px] font-semibold text-on-surface-variant">
-                                <div>
-                                  <span className="block text-[8px] text-on-surface-variant/70 uppercase">Kode Kelas</span>
-                                  <span className="text-primary font-bold">{env.className}</span>
-                                </div>
-                                <div>
-                                  <span className="block text-[8px] text-on-surface-variant/70 uppercase">Ruangan</span>
-                                  <span className="text-secondary font-bold">{env.roomName || '—'}</span>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </section>
-
-                    {/* Hero Stats Section */}
-                    <section className="grid grid-cols-1 gap-4">
-                      <div className="bg-white p-5 rounded-2xl border border-outline-variant/30 auth-card-shadow relative overflow-hidden group select-none">
-                        <div className="absolute -right-12 -top-12 w-32 h-32 bg-secondary/10 rounded-full blur-3xl group-hover:opacity-20 transition-opacity"></div>
-                        <h2 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-3">
-                          Momentum Akademik ({activeCourseName})
+                    {/* 1. CARD MATA KULIAH AKTIF */}
+                    <section className="space-y-2.5">
+                      <div className="flex items-center justify-between px-0.5 select-none">
+                        <h2 className="text-xs sm:text-sm font-bold text-[#0F2747] tracking-wider uppercase">
+                          MATA KULIAH AKTIF
                         </h2>
-                        <div className="flex items-end justify-between">
-                          <div>
-                            <div className="flex items-baseline gap-1">
-                              <span className="text-3xl font-bold text-primary">{momentumStats.completed}</span>
-                              <span className="text-xs text-on-surface-variant font-medium">/ {momentumStats.total}</span>
+                        {enrollments.length > 1 && (
+                          <button
+                            onClick={() => setIsCourseModalOpen(true)}
+                            className="text-xs font-semibold text-[#008F7A] hover:underline flex items-center gap-0.5 cursor-pointer transition-colors"
+                          >
+                            Lihat semua <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* 2-Part Card (Navy Header + White 3-Column Body) */}
+                      <div className="bg-white rounded-[18px] border border-[#E5EAF1] shadow-xs overflow-hidden">
+                        {/* Top: Navy Solid */}
+                        <div className="bg-[#0F2747] p-4 sm:p-5 text-white flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-3.5 min-w-0">
+                            <div className="w-11 h-11 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center text-white shrink-0">
+                              <BookOpen className="w-5 h-5" />
                             </div>
-                            <p className="text-[11px] text-on-surface-variant font-semibold mt-1">Tugas Selesai</p>
+                            <div className="min-w-0">
+                              <h3 className="text-sm sm:text-base font-bold text-white uppercase tracking-tight truncate leading-tight">
+                                {activeCourseName || 'Tidak Ada Mata Kuliah'}
+                              </h3>
+                              <p className="text-xs text-slate-300 font-medium mt-0.5 truncate">
+                                {activeCourseCode} · 2 SKS
+                              </p>
+                            </div>
                           </div>
-                          
-                          {/* circular Progress Ring */}
-                          <div className="w-16 h-16 flex items-center justify-center relative">
-                            <svg className="w-full h-full transform -rotate-90">
-                              <circle 
-                                className="text-gray-100" 
-                                cx="32" cy="32" fill="transparent" r="26" 
-                                stroke="currentColor" strokeWidth="5"
-                              ></circle>
-                              <circle 
-                                className="text-secondary" 
-                                cx="32" cy="32" fill="transparent" r="26" 
-                                stroke="currentColor" strokeWidth="5"
-                                strokeDasharray="163.3"
-                                strokeDashoffset={163.3 - (163.3 * momentumStats.percentage) / 100}
-                              ></circle>
-                            </svg>
-                            <span className="absolute text-secondary font-bold text-xs">
-                              {momentumStats.percentage}%
+
+                          {/* Aktif Badge */}
+                          <div className="px-3 py-1 bg-white text-[#008F7A] rounded-full text-xs font-bold flex items-center gap-1.5 shadow-sm shrink-0">
+                            <span className="w-2 h-2 rounded-full bg-[#008F7A]"></span>
+                            Aktif
+                          </div>
+                        </div>
+
+                        {/* Bottom: 3-Column Info in White */}
+                        <div className="grid grid-cols-3 divide-x divide-[#E5EAF1] p-3.5 sm:p-4 text-center bg-white">
+                          <div className="flex flex-col items-center justify-center px-1">
+                            <GraduationCap className="w-4 h-4 text-[#008F7A] mb-1" />
+                            <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider">KODE MK</span>
+                            <span className="text-xs sm:text-sm font-bold text-[#0F172A] mt-0.5 truncate max-w-full">
+                              {activeCourseCode || '-'}
+                            </span>
+                          </div>
+                          <div className="flex flex-col items-center justify-center px-1">
+                            <Users className="w-4 h-4 text-[#008F7A] mb-1" />
+                            <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider">KODE KELAS</span>
+                            <span className="text-xs sm:text-sm font-bold text-[#0F172A] mt-0.5 truncate max-w-full">
+                              {activeClassName || '-'}
+                            </span>
+                          </div>
+                          <div className="flex flex-col items-center justify-center px-1">
+                            <MapPin className="w-4 h-4 text-[#008F7A] mb-1" />
+                            <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider">RUANGAN</span>
+                            <span className="text-xs sm:text-sm font-bold text-[#0F172A] mt-0.5 truncate max-w-full">
+                              {activeRoomName || '-'}
                             </span>
                           </div>
                         </div>
+                      </div>
+                    </section>
 
-                        <div className="mt-5 grid grid-cols-2 gap-4 border-t border-outline-variant/15 pt-4">
-                          <div className="flex flex-col">
-                            <span className="text-lg font-bold text-secondary">{momentumStats.pending}</span>
-                            <span className="text-[10px] font-semibold text-on-surface-variant uppercase">Sisa Tugas</span>
+                    {/* 2. CARD PROGRES PERKULIAHAN */}
+                    <section className="space-y-2.5">
+                      <h2 className="text-xs sm:text-sm font-bold text-[#0F2747] tracking-wider uppercase px-0.5 select-none">
+                        PROGRES PERKULIAHAN
+                      </h2>
+
+                      <div className="bg-white rounded-[18px] border border-[#E5EAF1] shadow-xs p-4 sm:p-5 space-y-4">
+                        {/* Top: Left Stats & Right Circular Progress Ring */}
+                        <div className="flex items-center justify-between gap-4">
+                          {/* Left: Tugas selesai */}
+                          <div className="space-y-1">
+                            <span className="text-xs font-semibold text-[#64748B] block">Tugas selesai</span>
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-3xl font-bold text-[#008F7A] leading-none">
+                                {momentumStats.completed}
+                              </span>
+                              <span className="text-xl font-bold text-slate-300">
+                                / {momentumStats.total}
+                              </span>
+                            </div>
+                            <p className="text-xs font-semibold text-[#0F172A] pt-1">
+                              {momentumStats.completed === momentumStats.total && momentumStats.total > 0
+                                ? 'Semua tugas telah selesai! 🎉'
+                                : momentumStats.total === 0
+                                ? 'Belum ada tugas aktif'
+                                : `${momentumStats.pending} tugas belum dikerjakan`}
+                            </p>
                           </div>
-                          <div className="flex flex-col">
-                            <span className="text-lg font-bold text-primary">{courseMeetings.length}</span>
-                            <span className="text-[10px] font-semibold text-on-surface-variant uppercase">Pertemuan Kuliah</span>
+
+                          {/* Right: Circular Progress Ring */}
+                          <div className="w-24 h-24 sm:w-28 sm:h-28 flex items-center justify-center relative shrink-0">
+                            <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+                              <circle
+                                cx="50"
+                                cy="50"
+                                r="38"
+                                fill="transparent"
+                                stroke="#E5EAF1"
+                                strokeWidth="8"
+                              />
+                              <circle
+                                cx="50"
+                                cy="50"
+                                r="38"
+                                fill="transparent"
+                                stroke="#008F7A"
+                                strokeWidth="8"
+                                strokeLinecap="round"
+                                strokeDasharray="238.76"
+                                strokeDashoffset={238.76 - (238.76 * momentumStats.percentage) / 100}
+                                className="transition-all duration-700 ease-out"
+                              />
+                            </svg>
+                            <div className="absolute flex flex-col items-center justify-center text-center">
+                              <span className="text-lg sm:text-xl font-bold text-[#0F172A] leading-tight">
+                                {momentumStats.percentage}%
+                              </span>
+                              <span className="text-[10px] text-[#64748B] font-medium leading-none">
+                                Selesai
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Bottom: 2 Compact Stat Boxes */}
+                        <div className="grid grid-cols-2 gap-3 pt-1">
+                          {/* Box 1: Sisa Tugas */}
+                          <div className="bg-[#F0FDF9] border border-[#CCFBF1] rounded-2xl p-3 sm:p-3.5 flex items-center gap-2.5 sm:gap-3">
+                            <div className="w-9 h-9 rounded-xl bg-white flex items-center justify-center text-[#008F7A] shadow-xs shrink-0">
+                              <ClipboardList className="w-5 h-5" />
+                            </div>
+                            <div className="min-w-0">
+                              <span className="text-lg sm:text-xl font-bold text-[#0F172A] leading-tight block">
+                                {momentumStats.pending}
+                              </span>
+                              <span className="text-xs font-bold text-[#0F172A] block leading-tight truncate">
+                                Sisa Tugas
+                              </span>
+                              <span className="text-[10px] text-[#64748B] font-medium block truncate">
+                                Tugas belum dikerjakan
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Box 2: Pertemuan Kuliah */}
+                          <div className="bg-[#FAF5FF] border border-[#F3E8FF] rounded-2xl p-3 sm:p-3.5 flex items-center gap-2.5 sm:gap-3">
+                            <div className="w-9 h-9 rounded-xl bg-white flex items-center justify-center text-[#8B5CF6] shadow-xs shrink-0">
+                              <Calendar className="w-5 h-5" />
+                            </div>
+                            <div className="min-w-0">
+                              <span className="text-lg sm:text-xl font-bold text-[#0F172A] leading-tight block">
+                                {courseMeetings.length}
+                              </span>
+                              <span className="text-xs font-bold text-[#0F172A] block leading-tight truncate">
+                                Pertemuan Kuliah
+                              </span>
+                              <span className="text-[10px] text-[#64748B] font-medium block truncate">
+                                Pertemuan minggu ini
+                              </span>
+                            </div>
                           </div>
                         </div>
                       </div>
                     </section>
 
-                    {/* Active Assignments List */}
-                    <section className="space-y-4">
-                      <div className="flex justify-between items-center px-1 select-none">
-                        <h3 className="text-base font-bold text-primary">Daftar Tugas Aktif ({activeCourseName})</h3>
+                    {/* 3. TUGAS ANDA */}
+                    <section className="space-y-2.5">
+                      <div className="flex items-center justify-between px-0.5 select-none">
+                        <h2 className="text-xs sm:text-sm font-bold text-[#0F2747] tracking-wider uppercase">
+                          TUGAS ANDA
+                        </h2>
+                        <span className="text-xs font-semibold text-[#008F7A] flex items-center gap-0.5">
+                          {studentTasks.length} tugas <ChevronRight className="w-3.5 h-3.5" />
+                        </span>
                       </div>
 
                       <div className="space-y-3">
                         {studentTasks.length === 0 ? (
-                          <p className="text-xs text-on-surface-variant font-medium text-center py-6 bg-white rounded-xl border border-dashed border-outline-variant">
-                            Belum ada tugas yang tersedia untuk mata kuliah ini.
-                          </p>
+                          <div className="bg-white rounded-[18px] border border-dashed border-[#E5EAF1] p-8 text-center space-y-2">
+                            <div className="w-12 h-12 bg-slate-50 text-slate-400 rounded-full flex items-center justify-center mx-auto">
+                              <ClipboardList className="w-6 h-6" />
+                            </div>
+                            <p className="text-xs font-bold text-[#0F172A]">Belum ada tugas yang tersedia</p>
+                            <p className="text-[11px] text-[#64748B]">Tugas untuk mata kuliah ini akan muncul di sini.</p>
+                          </div>
                         ) : (
-                          studentTasks.map((assignment) => {
+                          studentTasks.map((assignment, idx) => {
                             const isSubmitted = assignment.status === 'submitted';
+                            const isClosed = assignment.assignmentStatus === 'closed';
+
                             return (
-                              <div 
-                                key={assignment.id} 
-                                className="bg-white p-4 rounded-xl border border-outline-variant/30 auth-card-shadow flex gap-4 items-start active:scale-[0.99] transition-all hover:border-primary/20 cursor-pointer"
+                              <div
+                                key={assignment.id}
                                 onClick={() => handleSelectAssignment(assignment)}
+                                className="bg-white rounded-[18px] border border-[#E5EAF1] shadow-xs p-4 space-y-3 hover:border-[#008F7A]/30 transition-all cursor-pointer select-none active:scale-[0.99]"
                               >
-                                <div className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center shrink-0 text-primary">
-                                  {assignment.courseCode === 'IF-MOB' && <ClipboardList className="w-5 h-5" />}
-                                  {assignment.courseCode === 'IF-SPK' && <Compass className="w-5 h-5" />}
-                                  {assignment.courseCode === 'IF-DMBD' && <FileCheck2 className="w-5 h-5" />}
-                                  {!['IF-MOB', 'IF-SPK', 'IF-DMBD'].includes(assignment.courseCode) && <FileText className="w-5 h-5" />}
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="flex items-start gap-3 min-w-0">
+                                    <div className="w-11 h-11 rounded-xl bg-blue-50/80 text-[#0F2747] flex items-center justify-center shrink-0">
+                                      <FileText className="w-5 h-5 text-[#0F2747]" />
+                                    </div>
+                                    <div className="min-w-0">
+                                      <h3 className="text-sm font-bold text-[#0F172A] leading-snug truncate">
+                                        {assignment.title}
+                                      </h3>
+                                      <p className="text-xs text-[#64748B] font-medium mt-0.5">
+                                        Pertemuan ke-{idx + 1}
+                                      </p>
+                                      <div className="flex items-center gap-1.5 mt-2 text-xs font-medium text-[#64748B]">
+                                        <Calendar className="w-3.5 h-3.5 text-[#64748B]" />
+                                        <span>
+                                          Batas:{' '}
+                                          <strong className="text-[#008F7A] font-bold">
+                                            {new Date(assignment.deadline).toLocaleDateString('id-ID', {
+                                              day: 'numeric',
+                                              month: 'long',
+                                              year: 'numeric',
+                                            })}{' '}
+                                            {new Date(assignment.deadline).toLocaleTimeString('id-ID', {
+                                              hour: '2-digit',
+                                              minute: '2-digit',
+                                            })}
+                                          </strong>
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Status Badge */}
+                                  <div className="flex flex-col items-end gap-2 shrink-0">
+                                    {isSubmitted ? (
+                                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-[#E6F7F5] text-[#008F7A] border border-[#CCFBF1]">
+                                        SELESAI
+                                      </span>
+                                    ) : isClosed ? (
+                                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-50 text-amber-700 border border-amber-200">
+                                        DITUTUP
+                                      </span>
+                                    ) : (
+                                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-50 text-amber-700 border border-amber-200">
+                                        BELUM DIKUMPULKAN
+                                      </span>
+                                    )}
+
+                                    {isSubmitted && (
+                                      <div className="w-6 h-6 rounded-full bg-[#E6F7F5] text-[#008F7A] flex items-center justify-center">
+                                        <CheckCircle className="w-4 h-4" />
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
-                                
-                                <div className="flex-grow min-w-0">
-                                  <div className="flex justify-between items-start gap-2">
-                                    <h4 className="text-xs md:text-sm font-bold text-primary truncate leading-tight">
-                                      {assignment.title}
-                                    </h4>
-                                    <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase shrink-0 ${
-                                      isSubmitted 
-                                        ? 'bg-secondary/15 text-secondary border border-secondary/10' 
-                                        : 'bg-red-50 text-red-600 border border-red-100'
-                                    }`}>
-                                      {isSubmitted ? 'Selesai' : 'Belum Kumpul'}
-                                    </span>
-                                  </div>
-                                  <p className="text-[11px] text-on-surface-variant font-medium mt-1 truncate">
-                                    {assignment.description}
-                                  </p>
-                                  <div className="flex items-center gap-1.5 mt-3 text-on-surface-variant font-semibold text-[10px]">
-                                    <Calendar className="w-3.5 h-3.5" />
-                                    <span>Tenggat: {new Date(assignment.deadline).toLocaleDateString('id-ID', {
-                                      day: '2-digit', month: 'short', year: 'numeric'
-                                    })}</span>
-                                  </div>
+
+                                {/* Bottom Row Link */}
+                                <div className="border-t border-[#E5EAF1] pt-2.5 flex items-center justify-between text-xs font-bold text-[#0F2747]">
+                                  <span className="flex items-center gap-1.5 text-[#0F2747]">
+                                    <ClipboardList className="w-4 h-4 text-[#008F7A]" /> Lihat Detail
+                                  </span>
+                                  <ChevronRight className="w-4 h-4 text-[#64748B]" />
                                 </div>
                               </div>
                             );
@@ -1449,64 +1572,128 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
       {/* Floating Action Button (FAB) (Only on Tasks Main screen) */}
       {!selectedAssignment && activeTab === 'tasks' && (
         <button 
-          className="fixed right-6 bottom-24 w-14 h-14 bg-primary hover:bg-primary/95 text-white rounded-2xl shadow-xl flex items-center justify-center active:scale-90 transition-all z-40 border border-outline-variant/10 cursor-pointer"
+          className="fixed right-5 bottom-20 w-13 h-13 bg-[#0F2747] hover:bg-[#091B33] text-white rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-all z-30 cursor-pointer"
           title="Kumpul Tugas"
           onClick={() => {
             const firstUnsubmitted = studentTasks.find(t => t.status !== 'submitted');
             if (firstUnsubmitted) {
               handleSelectAssignment(firstUnsubmitted);
+            } else if (studentTasks.length > 0) {
+              handleSelectAssignment(studentTasks[0]);
             } else {
               alert('Semua tugas untuk mata kuliah ini sudah dikumpulkan! Luar biasa.');
             }
           }}
         >
-          <CloudUpload className="w-6 h-6 animate-bounce" />
+          <Plus className="w-6 h-6 stroke-[2.5]" />
         </button>
       )}
 
+      {/* Course Selection Modal */}
+      {isCourseModalOpen && (
+        <div className="fixed inset-0 bg-[#0F2747]/40 backdrop-blur-xs z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
+          <div className="bg-white w-full sm:max-w-md rounded-t-[24px] sm:rounded-[20px] p-5 space-y-4 max-h-[80vh] overflow-y-auto shadow-2xl border border-[#E5EAF1]">
+            <div className="flex items-center justify-between border-b border-[#E5EAF1] pb-3 select-none">
+              <div className="flex items-center gap-2">
+                <BookOpen className="w-5 h-5 text-[#008F7A]" />
+                <h3 className="text-sm font-bold text-[#0F2747]">Pilih Mata Kuliah</h3>
+              </div>
+              <button
+                onClick={() => setIsCourseModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-2.5">
+              {enrollments.map((env) => {
+                const isSelected = selectedEnrollment?.id === env.id;
+                return (
+                  <div
+                    key={env.id}
+                    onClick={() => {
+                      setSelectedEnrollment(env);
+                      setIsCourseModalOpen(false);
+                    }}
+                    className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
+                      isSelected
+                        ? 'bg-[#F0FDF9] border-[#008F7A] ring-1 ring-[#008F7A]'
+                        : 'bg-white border-[#E5EAF1] hover:border-slate-300'
+                    }`}
+                  >
+                    <div>
+                      <h4 className="text-xs font-bold text-[#0F172A]">{env.courseName}</h4>
+                      <p className="text-[11px] text-[#64748B] mt-0.5">
+                        {env.courseCode} · Kelas {env.className} · Ruang {env.roomName || '-'}
+                      </p>
+                    </div>
+                    {isSelected && (
+                      <CheckCircle2 className="w-5 h-5 text-[#008F7A] shrink-0" />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Bottom Navigation Bar */}
-      <nav className="fixed bottom-0 left-0 right-0 h-16 bg-white border-t border-outline-variant/20 flex justify-around items-center px-4 z-40 select-none auth-card-shadow rounded-t-2xl font-sans">
+      <nav className="fixed bottom-0 left-0 right-0 h-16 bg-white border-t border-[#E5EAF1] flex justify-around items-center px-4 z-40 select-none shadow-lg rounded-t-[18px] font-sans">
         <button 
-          className={`flex flex-col items-center justify-center px-4 py-2 transition-transform duration-150 cursor-pointer ${
+          className={`flex flex-col items-center justify-center px-3 py-1 transition-all cursor-pointer relative ${
             activeTab === 'tasks' && !selectedAssignment
-              ? 'text-secondary font-bold' 
-              : 'text-on-surface-variant hover:text-primary'
+              ? 'text-[#008F7A] font-bold' 
+              : 'text-[#64748B] hover:text-[#0F2747]'
           }`}
           onClick={() => startTransition(() => { setActiveTab('tasks'); setSelectedAssignment(null); })}
         >
+          {activeTab === 'tasks' && !selectedAssignment && (
+            <span className="absolute top-0 w-8 h-1 bg-[#008F7A] rounded-full"></span>
+          )}
           <ClipboardList className="w-5 h-5" />
           <span className="text-[10px] font-bold mt-1">Daftar Tugas</span>
         </button>
         <button 
-          className={`flex flex-col items-center justify-center px-4 py-2 transition-transform duration-150 cursor-pointer ${
+          className={`flex flex-col items-center justify-center px-3 py-1 transition-all cursor-pointer relative ${
             activeTab === 'materials' 
-              ? 'text-secondary font-bold' 
-              : 'text-on-surface-variant hover:text-primary'
+              ? 'text-[#008F7A] font-bold' 
+              : 'text-[#64748B] hover:text-[#0F2747]'
           }`}
           onClick={() => startTransition(() => { setActiveTab('materials'); setSelectedAssignment(null); })}
         >
+          {activeTab === 'materials' && (
+            <span className="absolute top-0 w-8 h-1 bg-[#008F7A] rounded-full"></span>
+          )}
           <BookOpen className="w-5 h-5" />
           <span className="text-[10px] font-bold mt-1">Materi Kuliah</span>
         </button>
         <button 
-          className={`flex flex-col items-center justify-center px-4 py-2 transition-transform duration-150 cursor-pointer ${
+          className={`flex flex-col items-center justify-center px-3 py-1 transition-all cursor-pointer relative ${
             activeTab === 'history' 
-              ? 'text-secondary font-bold' 
-              : 'text-on-surface-variant hover:text-primary'
+              ? 'text-[#008F7A] font-bold' 
+              : 'text-[#64748B] hover:text-[#0F2747]'
           }`}
           onClick={() => startTransition(() => { setActiveTab('history'); setSelectedAssignment(null); })}
         >
+          {activeTab === 'history' && (
+            <span className="absolute top-0 w-8 h-1 bg-[#008F7A] rounded-full"></span>
+          )}
           <History className="w-5 h-5" />
           <span className="text-[10px] font-bold mt-1">Riwayat & Nilai</span>
         </button>
         <button 
-          className={`flex flex-col items-center justify-center px-4 py-2 transition-transform duration-150 cursor-pointer ${
+          className={`flex flex-col items-center justify-center px-3 py-1 transition-all cursor-pointer relative ${
             activeTab === 'profile' 
-              ? 'text-secondary font-bold' 
-              : 'text-on-surface-variant hover:text-primary'
+              ? 'text-[#008F7A] font-bold' 
+              : 'text-[#64748B] hover:text-[#0F2747]'
           }`}
           onClick={() => startTransition(() => { setActiveTab('profile'); setSelectedAssignment(null); })}
         >
+          {activeTab === 'profile' && (
+            <span className="absolute top-0 w-8 h-1 bg-[#008F7A] rounded-full"></span>
+          )}
           <UserIcon className="w-5 h-5" />
           <span className="text-[10px] font-bold mt-1">Profil</span>
         </button>
