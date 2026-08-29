@@ -8,8 +8,9 @@ import {
   FileText, CheckSquare, UploadCloud, Info, Bell, Users
 } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, AreaChart, Area, CartesianGrid } from 'recharts';
+import { createClient } from '@supabase/supabase-js';
 import { User } from '../types';
-import { supabase } from '../lib/supabase';
+import { supabase, supabaseUrl, supabaseAnonKey } from '../lib/supabase';
 import { COURSES } from '../data';
 
 interface AdminPortalProps {
@@ -384,6 +385,19 @@ export default function AdminPortal({ user, onLogout }: AdminPortalProps) {
 
     setIsSubmittingLecturer(true);
     try {
+      // 0. Pre-check if email already exists in profiles
+      const { data: existingProf } = await supabase
+        .from('profiles')
+        .select('id, email, role')
+        .eq('email', email)
+        .maybeSingle();
+
+      if (existingProf) {
+        showBanner('error', `Email ${email} sudah terdaftar dengan role ${existingProf.role}.`);
+        setIsSubmittingLecturer(false);
+        return;
+      }
+
       let created = false;
       let errorDetail = '';
 
@@ -408,25 +422,119 @@ export default function AdminPortal({ user, onLogout }: AdminPortalProps) {
         errorDetail = invokeCatch.message || '';
       }
 
-      // 2. If Edge Function is not available/deployed, use backend server endpoint
+      // 2. Client-side isolated Auth signUp fallback (works on any static SPA hosting without overwriting admin session)
       if (!created) {
-        const sessionRes = await supabase.auth.getSession();
-        const token = sessionRes.data.session?.access_token || '';
+        try {
+          const tempAuthClient = createClient(supabaseUrl, supabaseAnonKey, {
+            auth: {
+              persistSession: false,
+              autoRefreshToken: false,
+              detectSessionInUrl: false,
+            }
+          });
 
-        const serverRes = await fetch('/api/admin/create-lecturer', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({ name, email, password })
-        });
+          const { data: authData, error: authErr } = await tempAuthClient.auth.signUp({
+            email,
+            password,
+            options: {
+              data: {
+                full_name: name,
+                name,
+                role: 'lecturer',
+              }
+            }
+          });
 
-        const serverData = await serverRes.json();
-        if (!serverRes.ok || serverData.error) {
-          throw new Error(serverData.error || errorDetail || 'Gagal menambahkan dosen');
+          if (authErr) {
+            if (authErr.message?.toLowerCase().includes('rate limit')) {
+              throw new Error('Supabase email rate limit tercapai. Silakan coba beberapa saat lagi.');
+            }
+            throw authErr;
+          }
+
+          if (authData?.user) {
+            const newLecturerId = authData.user.id;
+
+            // Ensure profile exists in public.profiles table
+            const { error: profErr } = await supabase
+              .from('profiles')
+              .upsert({
+                id: newLecturerId,
+                email,
+                name,
+                role: 'lecturer',
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              });
+
+            if (profErr) {
+              console.warn('Profile upsert warning:', profErr);
+            }
+
+            // Insert audit log
+            try {
+              await supabase.from('audit_logs').insert({
+                actor_id: user.uid,
+                actor_name: user.name || 'Administrator',
+                actor_email: user.email || '',
+                action: 'CREATE_LECTURER',
+                entity_type: 'lecturer',
+                entity_id: newLecturerId,
+                metadata: { name, email },
+                created_at: new Date().toISOString(),
+              });
+            } catch (auditErr) {
+              console.warn('Audit log warning:', auditErr);
+            }
+
+            created = true;
+          }
+        } catch (clientErr: any) {
+          console.warn('Isolated client signUp error:', clientErr);
+          if (!errorDetail) {
+            errorDetail = clientErr.message || '';
+          }
         }
-        created = true;
+      }
+
+      // 3. If local development server backend endpoint is running, attempt proxy with safe JSON parsing
+      if (!created) {
+        try {
+          const sessionRes = await supabase.auth.getSession();
+          const token = sessionRes.data.session?.access_token || '';
+
+          const serverRes = await fetch('/api/admin/create-lecturer', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ name, email, password })
+          });
+
+          let serverData: any = null;
+          try {
+            const rawText = await serverRes.text();
+            serverData = rawText ? JSON.parse(rawText) : null;
+          } catch {
+            serverData = null;
+          }
+
+          if (serverRes.ok && (serverData?.success || !serverData?.error)) {
+            created = true;
+          } else if (serverData?.error) {
+            throw new Error(serverData.error);
+          }
+        } catch (serverProxyErr: any) {
+          console.warn('Server proxy create-lecturer failed:', serverProxyErr);
+          if (!errorDetail) {
+            errorDetail = serverProxyErr.message || '';
+          }
+        }
+      }
+
+      if (!created) {
+        throw new Error(errorDetail || 'Gagal menambahkan dosen ke sistem.');
       }
 
       showBanner('success', `Dosen ${name} (${email}) berhasil ditambahkan ke sistem.`);
