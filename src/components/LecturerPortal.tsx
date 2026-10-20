@@ -138,6 +138,7 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
   const [selectedMaterialToDelete, setSelectedMaterialToDelete] = useState<any | null>(null);
   const [isMaterialDeleting, setIsMaterialDeleting] = useState(false);
   const [materialDeleteError, setMaterialDeleteError] = useState<string | null>(null);
+  const [materialNotification, setMaterialNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Course Delete States
   const [selectedCourseToDelete, setSelectedCourseToDelete] = useState<any | null>(null);
@@ -2490,52 +2491,86 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
 
   const handleConfirmDeleteMaterial = async () => {
     if (!selectedMaterialToDelete) return;
+
+    // 1. Validasi hak akses dosen terhadap mata kuliah terkait
+    const currentCourse = courses.find(c => c.id === selectedMaterialCourseId);
+    if (currentCourse && currentCourse.lecturer_id && currentCourse.lecturer_id !== user.uid && user.role !== 'admin') {
+      setMaterialDeleteError('Anda tidak memiliki hak akses untuk menghapus materi pada mata kuliah ini.');
+      return;
+    }
+
     setIsMaterialDeleting(true);
     setMaterialDeleteError(null);
 
     try {
       const material = selectedMaterialToDelete;
 
+      // 2. Jika materi berupa file fisik di Supabase Storage (bukan URL Google Drive / eksternal), hapus dari Storage
       if (material.material_type === 'file' && material.file_path) {
-        // Delete from Storage first
-        const { error: storageError } = await supabase.storage
-          .from('course-materials')
-          .remove([material.file_path]);
+        const isExternalOrDrive = /^https?:\/\//i.test(material.file_path) || isGoogleDriveUrl(material.file_path);
+        if (!isExternalOrDrive) {
+          let cleanPath = material.file_path.trim().replace(/^\/+/, '');
+          if (cleanPath.startsWith('course-materials/')) {
+            cleanPath = cleanPath.substring('course-materials/'.length);
+          }
+          const pathsToDelete = [cleanPath];
+          if (cleanPath !== material.file_path) {
+            pathsToDelete.push(material.file_path);
+          }
 
-        if (storageError) {
-          console.error('Error deleting from storage:', storageError);
-          setMaterialDeleteError('Gagal menghapus file materi.');
-          setIsMaterialDeleting(false);
-          return;
+          try {
+            const { error: storageError } = await supabase.storage
+              .from('course-materials')
+              .remove(pathsToDelete);
+
+            if (storageError) {
+              console.warn('Peringatan saat menghapus berkas di storage:', storageError.message);
+            }
+          } catch (storageErr) {
+            console.warn('Pengecualian storage delete:', storageErr);
+          }
         }
       }
 
-      // Delete from database
+      // 3. Hapus data materi dari database Supabase
       const { error: dbError } = await supabase
         .from('course_materials')
         .delete()
         .eq('id', material.id);
 
       if (dbError) {
-        if (material.material_type === 'file') {
-          setMaterialDeleteError('File berhasil dihapus tetapi data materi gagal dihapus.');
-        } else {
-          setMaterialDeleteError('Gagal menghapus materi.');
-        }
-        setIsMaterialDeleting(false);
-        return;
+        throw new Error(`Gagal menghapus materi dari database: ${dbError.message}`);
       }
 
+      // 4. Tutup modal & perbarui daftar materi secara otomatis
+      const deletedTitle = material.title;
       setSelectedMaterialToDelete(null);
+
       if (selectedMeetingForMaterials) {
         await loadMaterials(selectedMeetingForMaterials.id);
       }
       if (selectedMaterialCourseId) {
         await loadMeetings(selectedMaterialCourseId);
       }
+
+      // 5. Tampilkan notifikasi sukses
+      setMaterialNotification({
+        type: 'success',
+        message: `Materi "${deletedTitle}" berhasil dihapus dari pertemuan ini.`
+      });
+
+      // Auto dismiss notifikasi setelah 5 detik
+      setTimeout(() => {
+        setMaterialNotification(prev => (prev?.message.includes(deletedTitle) ? null : prev));
+      }, 5000);
     } catch (err: any) {
       console.error('Error deleting material:', err);
-      setMaterialDeleteError('Gagal menghapus materi.');
+      const errMsg = err.message || 'Gagal menghapus materi perkuliahan.';
+      setMaterialDeleteError(errMsg);
+      setMaterialNotification({
+        type: 'error',
+        message: errMsg
+      });
     } finally {
       setIsMaterialDeleting(false);
     }
@@ -4755,37 +4790,74 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
               </>
             ) : (
               // Case 2: Meeting detail & materials list view
-              <>
-                <div className="space-y-4">
-                  <button
-                    onClick={() => setSelectedMeetingForMaterials(null)}
-                    className="text-xs font-bold text-on-surface-variant hover:text-primary transition-all duration-200 inline-flex items-center gap-1.5 cursor-pointer"
-                  >
-                    ← Kembali ke Daftar Pertemuan
-                  </button>
+              (() => {
+                const activeMaterialCourse = courses.find(c => c.id === selectedMaterialCourseId);
+                const canManageCurrentCourse = Boolean(
+                  activeMaterialCourse && (
+                    activeMaterialCourse.lecturer_id === user.uid ||
+                    !activeMaterialCourse.lecturer_id ||
+                    user.role === 'admin'
+                  )
+                );
 
-                  <div className="bg-white p-6 rounded-2xl border border-outline-variant/30 auth-card-shadow space-y-3">
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                      <div>
-                        <span className="px-2.5 py-0.5 bg-primary/10 text-primary text-[10px] font-bold rounded-full">Pertemuan {selectedMeetingForMaterials.meeting_number}</span>
-                        <h2 className="text-base font-bold text-primary mt-1.5">{selectedMeetingForMaterials.title}</h2>
-                        {selectedMeetingForMaterials.description && (
-                          <AssignmentDescriptionRenderer
-                            content={selectedMeetingForMaterials.description}
-                            className="text-xs font-medium text-on-surface-variant mt-1 leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
-                          />
-                        )}
+                return (
+                  <>
+                    <div className="space-y-4">
+                      <button
+                        onClick={() => setSelectedMeetingForMaterials(null)}
+                        className="text-xs font-bold text-on-surface-variant hover:text-primary transition-all duration-200 inline-flex items-center gap-1.5 cursor-pointer"
+                      >
+                        ← Kembali ke Daftar Pertemuan
+                      </button>
+
+                      {/* Notifikasi Status Materi (Berhasil / Error) */}
+                      {materialNotification && (
+                        <div className={`p-4 rounded-xl border text-xs font-semibold flex items-center justify-between gap-3 animate-in fade-in duration-200 ${
+                          materialNotification.type === 'success'
+                            ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                            : 'bg-red-50 text-red-700 border-red-200'
+                        }`}>
+                          <div className="flex items-center gap-2">
+                            {materialNotification.type === 'success' ? (
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                            ) : (
+                              <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+                            )}
+                            <span>{materialNotification.message}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setMaterialNotification(null)}
+                            className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-200/50 transition-colors cursor-pointer"
+                            title="Tutup Notifikasi"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+
+                      <div className="bg-white p-6 rounded-2xl border border-outline-variant/30 auth-card-shadow space-y-3">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                          <div>
+                            <span className="px-2.5 py-0.5 bg-primary/10 text-primary text-[10px] font-bold rounded-full">Pertemuan {selectedMeetingForMaterials.meeting_number}</span>
+                            <h2 className="text-base font-bold text-primary mt-1.5">{selectedMeetingForMaterials.title}</h2>
+                            {selectedMeetingForMaterials.description && (
+                              <AssignmentDescriptionRenderer
+                                content={selectedMeetingForMaterials.description}
+                                className="text-xs font-medium text-on-surface-variant mt-1 leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+                              />
+                            )}
+                          </div>
+                          <span className={`px-2.5 py-1 text-[10px] font-bold rounded-full self-start sm:self-auto ${
+                            selectedMeetingForMaterials.is_published
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                              : 'bg-amber-50 text-amber-700 border border-amber-100'
+                          }`}>
+                            {selectedMeetingForMaterials.is_published ? 'Dipublikasikan' : 'Draft'}
+                          </span>
+                        </div>
                       </div>
-                      <span className={`px-2.5 py-1 text-[10px] font-bold rounded-full self-start sm:self-auto ${
-                        selectedMeetingForMaterials.is_published 
-                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' 
-                          : 'bg-amber-50 text-amber-700 border border-amber-100'
-                      }`}>
-                        {selectedMeetingForMaterials.is_published ? 'Dipublikasikan' : 'Draft'}
-                      </span>
                     </div>
-                  </div>
-                </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
                   {/* Left Column: Materials list */}
@@ -4863,16 +4935,19 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                                       <ExternalLink className="w-3.5 h-3.5" />
                                     </a>
                                   )}
-                                  <button
-                                    onClick={() => {
-                                      setSelectedMaterialToDelete(mat);
-                                      setMaterialDeleteError(null);
-                                    }}
-                                    className="p-1.5 hover:bg-red-50 text-red-500 border border-red-100 rounded-lg transition-colors cursor-pointer"
-                                    title="Hapus Materi"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
+                                  {canManageCurrentCourse && (
+                                    <button
+                                      onClick={() => {
+                                        setSelectedMaterialToDelete(mat);
+                                        setMaterialDeleteError(null);
+                                      }}
+                                      className="p-1.5 hover:bg-red-50 text-red-500 hover:text-red-600 border border-red-100 rounded-lg transition-colors cursor-pointer"
+                                      title="Hapus Materi"
+                                      aria-label={`Hapus materi ${mat.title}`}
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
                                 </div>
                               </div>
                             );
@@ -5029,7 +5104,9 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                   </div>
                 </div>
               </>
-            )}
+            );
+          })()
+        )}
           </div>
         )}
 
@@ -6552,6 +6629,96 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                 disabled={isAssignmentDeleting}
               >
                 {isAssignmentDeleting ? 'Menghapus...' : 'Hapus'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRMATION DELETE MATERIAL DIALOG */}
+      {selectedMaterialToDelete && (
+        <div className="fixed inset-0 bg-primary/20 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-outline-variant/10 animate-in fade-in zoom-in-95 duration-200 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center shrink-0 border border-red-100">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-primary font-sans leading-tight">
+                  Hapus Materi Perkuliahan?
+                </h3>
+                <p className="text-[11px] text-on-surface-variant font-medium">
+                  Konfirmasi penghapusan materi pembelajaran
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-on-surface-variant font-medium font-sans leading-relaxed">
+              Apakah Anda yakin ingin menghapus materi ini? Materi yang dihapus tidak dapat dipulihkan kembali.
+            </p>
+
+            {/* Informasi Detail Materi, Mata Kuliah, dan Pertemuan */}
+            <div className="p-3.5 bg-slate-50 rounded-xl border border-outline-variant/20 space-y-2 text-xs">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 border-b border-outline-variant/10 pb-2">
+                <span className="text-[11px] text-on-surface-variant font-semibold">Judul Materi:</span>
+                <span className="text-xs font-bold text-primary truncate max-w-xs">{selectedMaterialToDelete.title}</span>
+              </div>
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 border-b border-outline-variant/10 pb-2">
+                <span className="text-[11px] text-on-surface-variant font-semibold">Mata Kuliah:</span>
+                <span className="text-xs font-bold text-primary truncate max-w-xs">
+                  {courses.find(c => c.id === selectedMaterialCourseId)?.name || 'Mata Kuliah Terpilih'}
+                </span>
+              </div>
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 border-b border-outline-variant/10 pb-2">
+                <span className="text-[11px] text-on-surface-variant font-semibold">Pertemuan:</span>
+                <span className="text-xs font-bold text-primary">
+                  {selectedMeetingForMaterials ? `Pertemuan ${selectedMeetingForMaterials.meeting_number}: ${selectedMeetingForMaterials.title}` : '-'}
+                </span>
+              </div>
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1">
+                <span className="text-[11px] text-on-surface-variant font-semibold">Tipe Materi:</span>
+                <span className="text-xs font-bold text-primary">
+                  {selectedMaterialToDelete.material_type === 'file' ? 'Berkas Unggahan' : 'Tautan / Link Eksternal'}
+                </span>
+              </div>
+            </div>
+
+            {materialDeleteError && (
+              <div className="p-3 bg-red-50 text-red-600 rounded-xl text-xs font-bold border border-red-100 font-sans flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-red-600" />
+                <span>{materialDeleteError}</span>
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedMaterialToDelete(null);
+                  setMaterialDeleteError(null);
+                }}
+                className="flex-1 py-2.5 border border-outline-variant/60 text-on-surface-variant font-bold text-xs rounded-xl hover:bg-slate-50 transition-colors cursor-pointer font-sans"
+                disabled={isMaterialDeleting}
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteMaterial}
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl transition-all cursor-pointer font-sans disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-sm"
+                disabled={isMaterialDeleting}
+              >
+                {isMaterialDeleting ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Menghapus...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Hapus Materi</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
