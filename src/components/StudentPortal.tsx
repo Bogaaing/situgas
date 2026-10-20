@@ -9,7 +9,9 @@ import { User, Assignment } from '../types';
 import { COURSES } from '../data';
 import { apiRequest } from '../lib/api';
 import { supabase } from '../lib/supabase';
+import { isAssignmentApplicableToClass, isGoogleDriveUrl, normalizeUrl, isValidUrl } from '../lib/assignmentHelpers';
 import { AssignmentDescriptionRenderer, AutoLinkText } from './AutoLinkText';
+import { uploadFileToGDrive } from '../lib/gdrive';
 
 interface StudentPortalProps {
   user: User;
@@ -178,13 +180,14 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
               name
             )
           `)
-          .eq('course_id', selectedEnrollment.courseId)
-          .or(`class_name.is.null,class_name.eq.${activeClassName}`);
+          .eq('course_id', selectedEnrollment.courseId);
 
         if (assError) {
           console.error('Error loading student assignments from Supabase:', assError);
         } else {
-          fetchedAssignments = (assData || []).map(ass => {
+          fetchedAssignments = (assData || [])
+            .filter(ass => isAssignmentApplicableToClass(ass.class_name, activeClassName))
+            .map(ass => {
             const courseObj = Array.isArray(ass.course) ? ass.course[0] : ass.course;
             return {
               id: ass.id,
@@ -308,6 +311,11 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
       alert('File materi tidak tersedia.');
       return;
     }
+    // If the file path is a direct URL or Google Drive link, open it in browser
+    if (/^https?:\/\//i.test(filePath) || isGoogleDriveUrl(filePath)) {
+      window.open(normalizeUrl(filePath), '_blank', 'noopener,noreferrer');
+      return;
+    }
     try {
       const { data, error } = await supabase.storage
         .from('course-materials')
@@ -337,25 +345,12 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
       alert('Tautan materi tidak tersedia.');
       return;
     }
-    try {
-      const parsedUrl = new URL(url);
-      if (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') {
-        window.open(parsedUrl.href, '_blank', 'noopener,noreferrer');
-      } else {
-        alert('Tautan materi tidak tersedia.');
-      }
-    } catch (err) {
-      try {
-        const parsedUrlWithProto = new URL(`https://${url}`);
-        if (parsedUrlWithProto.protocol === 'http:' || parsedUrlWithProto.protocol === 'https:') {
-          window.open(parsedUrlWithProto.href, '_blank', 'noopener,noreferrer');
-          return;
-        }
-      } catch (innerErr) {
-        // Ignored
-      }
-      alert('Tautan materi tidak tersedia.');
+    const cleanUrl = normalizeUrl(url);
+    if (!isValidUrl(cleanUrl)) {
+      alert('Tautan materi tidak valid.');
+      return;
     }
+    window.open(cleanUrl, '_blank', 'noopener,noreferrer');
   };
 
   // Map submissions to assignments for student tasks view
@@ -399,6 +394,14 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
       setSimulatedFileName(assignment.submittedFile || '');
       setSubmissionLink(assignment.submittedLink || '');
       setSubmissionNote(assignment.submittedNote || '');
+
+      // Default to file upload (auto to Google Drive) if not already a link
+      if (assignment.submittedLink && !assignment.submittedFile) {
+        setActiveSubmitTab('link');
+      } else {
+        setActiveSubmitTab('file'); // Default to file upload directly to Google Drive
+      }
+
       setUploadProgress(assignment.status === 'submitted' ? 100 : 0);
       setIsUploading(false);
     });
@@ -433,6 +436,11 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
 
   const handleDownloadSubmittedFile = async (filePath: string) => {
     if (!filePath) return;
+    // If the file path is a direct URL or Google Drive link, open it in browser
+    if (/^https?:\/\//i.test(filePath) || isGoogleDriveUrl(filePath)) {
+      window.open(normalizeUrl(filePath), '_blank', 'noopener,noreferrer');
+      return;
+    }
     try {
       const { data, error } = await supabase.storage
         .from('assignment-submissions')
@@ -466,9 +474,19 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
       alert('Silakan pilih berkas dokumen (PDF/Doc) untuk diunggah.');
       return;
     }
-    if (activeSubmitTab === 'link' && !submissionLink.trim()) {
-      alert('Silakan masukkan URL link pengumpulan yang valid.');
-      return;
+
+    let normalizedLink: string | null = null;
+    if (activeSubmitTab === 'link') {
+      const trimmed = submissionLink.trim();
+      if (!trimmed) {
+        alert('Silakan masukkan tautan tugas (misalnya link Google Drive).');
+        return;
+      }
+      if (!isValidUrl(trimmed)) {
+        alert('Format URL tidak valid. Masukkan tautan lengkap, misalnya: https://drive.google.com/...');
+        return;
+      }
+      normalizedLink = normalizeUrl(trimmed);
     }
 
     if (selectedAssignment) {
@@ -485,19 +503,40 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
 
         if (activeSubmitTab === 'file') {
           if (selectedFile) {
-            // Upload real file to Supabase storage 'assignment-submissions'
-            const cleanFileName = selectedFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-            const storagePath = `${selectedAssignment.id}/${uid}/${Date.now()}-${cleanFileName}`;
+            let uploadedViaGDrive = false;
 
-            const { error: uploadErr } = await supabase.storage
-              .from('assignment-submissions')
-              .upload(storagePath, selectedFile, { upsert: true });
-
-            if (uploadErr) {
-              console.error('Storage upload error:', uploadErr);
-              throw new Error(`Gagal mengunggah file ke penyimpanan: ${uploadErr.message}`);
+            // 1. Coba upload langsung ke folder Google Drive terlebih dahulu
+            try {
+              const gdriveRes = await uploadFileToGDrive(selectedFile, 'submission');
+              if (gdriveRes && gdriveRes.fileUrl) {
+                finalFilePath = gdriveRes.fileUrl;
+                normalizedLink = gdriveRes.fileUrl;
+                uploadedViaGDrive = true;
+              }
+            } catch (gdriveErr: any) {
+              console.log('Google Drive direct upload not configured or failed, trying Supabase Storage fallback:', gdriveErr);
             }
-            finalFilePath = storagePath;
+
+            // 2. Fallback ke Supabase Storage jika upload Google Drive belum disetel/gagal
+            if (!uploadedViaGDrive) {
+              const cleanFileName = selectedFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+              const storagePath = `${selectedAssignment.id}/${uid}/${Date.now()}-${cleanFileName}`;
+
+              try {
+                const { error: uploadErr } = await supabase.storage
+                  .from('assignment-submissions')
+                  .upload(storagePath, selectedFile, { upsert: true });
+
+                if (uploadErr) {
+                  console.error('Storage upload error:', uploadErr);
+                  throw new Error(uploadErr.message);
+                }
+                finalFilePath = storagePath;
+              } catch (storageErr: any) {
+                console.error('Supabase storage upload failure:', storageErr);
+                throw new Error(`Gagal mengunggah berkas (${storageErr.message || 'Layanan penyimpanan sedang offline'}). Pastikan webhook Google Drive atau Supabase Storage telah aktif.`);
+              }
+            }
           } else {
             // Retain previously stored file path
             finalFilePath = simulatedFileName || null;
@@ -525,14 +564,21 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
           .eq('student_id', uid)
           .maybeSingle();
 
+        const submissionFilePath = activeSubmitTab === 'file'
+          ? finalFilePath
+          : (selectedAssignment.submittedFile || null);
+        const submissionFinalLink = activeSubmitTab === 'link'
+          ? normalizedLink
+          : (selectedAssignment.submittedLink || null);
+
         let supabaseErr = null;
         if (existingSub) {
           const { error: updateErr } = await supabase
             .from('submissions')
             .update({
               submitted_at: new Date().toISOString(),
-              file_path: finalFilePath,
-              submitted_link: activeSubmitTab === 'link' ? submissionLink : null,
+              file_path: submissionFilePath,
+              submitted_link: submissionFinalLink,
               submitted_note: submissionNote || null,
             })
             .eq('id', existingSub.id);
@@ -544,8 +590,8 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
               assignment_id: selectedAssignment.id,
               student_id: uid,
               submitted_at: new Date().toISOString(),
-              file_path: finalFilePath,
-              submitted_link: activeSubmitTab === 'link' ? submissionLink : null,
+              file_path: submissionFilePath,
+              submitted_link: submissionFinalLink,
               submitted_note: submissionNote || null,
             });
           supabaseErr = insertErr;
@@ -560,8 +606,8 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
             method: 'POST',
             body: JSON.stringify({
               assignmentId: selectedAssignment.id,
-              submittedFile: finalFilePath,
-              submittedLink: activeSubmitTab === 'link' ? submissionLink : null,
+              submittedFile: submissionFilePath,
+              submittedLink: submissionFinalLink,
               submittedNote: submissionNote || null,
             }),
           }).catch(() => {});
@@ -746,29 +792,93 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
             {/* Tabbed Upload Interface */}
             <div className="bg-white border border-outline-variant/40 rounded-2xl overflow-hidden auth-card-shadow">
               <div className="flex border-b border-outline-variant/20 bg-gray-50/50">
-                <button 
-                  className={`flex-1 py-3 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+                <button
+                  className={`flex-1 py-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                     activeSubmitTab === 'file'
                       ? 'border-primary text-primary bg-white'
                       : 'border-transparent text-on-surface-variant hover:bg-gray-100/50'
                   }`}
                   onClick={() => setActiveSubmitTab('file')}
                 >
-                  Unggah Dokumen (PDF/Doc)
+                  <CloudUpload className="w-4 h-4 text-emerald-600" />
+                  Unggah Berkas (Ke GDrive)
                 </button>
-                <button 
-                  className={`flex-1 py-3 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+                <button
+                  className={`flex-1 py-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                     activeSubmitTab === 'link'
                       ? 'border-primary text-primary bg-white'
                       : 'border-transparent text-on-surface-variant hover:bg-gray-100/50'
                   }`}
                   onClick={() => setActiveSubmitTab('link')}
                 >
-                  Kumpul Link External
+                  <LinkIcon className="w-4 h-4 text-slate-500" />
+                  Tautan / Link Manual
                 </button>
               </div>
 
               <div className="p-6">
+                {/* Google Drive / Link Submission Section */}
+                {activeSubmitTab === 'link' && (
+                  <div className="space-y-4">
+                    <div className="p-3.5 bg-emerald-50/90 border border-emerald-200/80 rounded-2xl flex items-start gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-2xs">
+                        <LinkIcon className="w-4 h-4" />
+                      </div>
+                      <div className="text-xs text-emerald-950 space-y-1">
+                        <p className="font-bold text-emerald-900">Pengumpulan Berkas via Google Drive</p>
+                        <p className="text-[11px] leading-relaxed text-emerald-800 font-medium">
+                          Simpan file tugas Anda ke Google Drive, lalu pastikan hak akses link sudah disetel ke publik (Anyone with the link can view). Tempelkan tautannya di kolom bawah.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="group">
+                      <label className="block text-xs font-bold text-slate-800 mb-2">
+                        Tautan Google Drive / Link Tugas
+                      </label>
+                      <div className="flex items-center border border-outline-variant/60 rounded-xl p-3 bg-white focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/10 transition-all shadow-2xs">
+                        <LinkIcon className="text-emerald-600 w-4 h-4 mr-2.5 shrink-0" />
+                        <input
+                          className="w-full bg-transparent border-none focus:ring-0 p-0 text-xs font-semibold placeholder:text-gray-400 outline-none text-slate-900"
+                          placeholder="https://drive.google.com/file/d/.../view?usp=sharing"
+                          type="url"
+                          value={submissionLink}
+                          onChange={(e) => setSubmissionLink(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Preview & Test Link Button */}
+                    {submissionLink.trim() && (
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 bg-slate-50 border border-slate-200/80 rounded-xl">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {isGoogleDriveUrl(submissionLink) ? (
+                            <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded shrink-0">
+                              Google Drive
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-bold rounded shrink-0">
+                              Tautan Web
+                            </span>
+                          )}
+                          <span className="text-xs text-slate-600 font-medium truncate">
+                            {submissionLink}
+                          </span>
+                        </div>
+                        <a
+                          href={normalizeUrl(submissionLink)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 text-slate-800 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 shrink-0 shadow-2xs self-end sm:self-auto"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5 text-emerald-600" />
+                          Tes Buka Link
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* File Upload Section */}
                 {activeSubmitTab === 'file' && (
                   <div>
@@ -782,10 +892,10 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
                     />
 
                     {!simulatedFileName && !selectedFile ? (
-                      <div 
+                      <div
                         className={`flex flex-col items-center justify-center border-2 border-dashed rounded-2xl p-8 cursor-pointer transition-all group select-none ${
-                          isDragOver 
-                            ? 'border-primary bg-primary/5 scale-[1.01]' 
+                          isDragOver
+                            ? 'border-primary bg-primary/5 scale-[1.01]'
                             : 'border-outline-variant/60 hover:bg-slate-50 hover:border-primary/40'
                         }`}
                         onClick={() => fileInputRef.current?.click()}
@@ -809,21 +919,27 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
                           <CloudUpload className="w-7 h-7" />
                         </div>
                         <span className="text-xs font-bold text-slate-900 mb-1">
-                          Klik untuk memilih file PDF atau seret berkas ke sini
+                          Pilih berkas dari perangkat Anda atau seret berkas ke sini
                         </span>
-                        <span className="text-[10px] text-slate-500 text-center font-medium">
-                          Mendukung format PDF, DOC, DOCX, ZIP (Maksimal 25MB)
+                        <span className="text-[10px] text-emerald-700 text-center font-bold">
+                          ✓ Berkas akan disimpan langsung ke Google Drive tugas
                         </span>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            fileInputRef.current?.click();
-                          }}
-                          className="mt-4 px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all cursor-pointer shadow-xs"
-                        >
-                          Pilih Berkas PDF
-                        </button>
+                        <span className="text-[9px] text-slate-400 text-center font-medium mt-0.5">
+                          Mendukung format PDF, DOC, DOCX, ZIP (Maks. 25MB)
+                        </span>
+                        <div className="flex items-center gap-2 mt-4">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              fileInputRef.current?.click();
+                            }}
+                            className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all cursor-pointer shadow-xs inline-flex items-center gap-1.5"
+                          >
+                            <CloudUpload className="w-3.5 h-3.5" />
+                            Pilih Berkas Tugas
+                          </button>
+                        </div>
                       </div>
                     ) : (
                       <div className="p-4 bg-slate-50 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-slate-200/80 animate-in fade-in slide-in-from-top-2 duration-200">
@@ -836,8 +952,8 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
                               {selectedFile ? selectedFile.name : (simulatedFileName.split('/').pop()?.replace(/^\d+-/, '') || simulatedFileName)}
                             </span>
                             <span className="text-[10px] text-slate-500 font-semibold block mt-0.5">
-                              {selectedFile 
-                                ? `${(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • Siap diunggah` 
+                              {selectedFile
+                                ? `${(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • Siap diunggah`
                                 : 'Berkas tersimpan di sistem'}
                             </span>
                           </div>
@@ -854,14 +970,14 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
                               <Download className="w-3.5 h-3.5" /> Unduh
                             </button>
                           )}
-                          <button 
+                          <button
                             type="button"
                             onClick={() => fileInputRef.current?.click()}
                             className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-xl text-xs font-bold transition-colors cursor-pointer shadow-2xs"
                           >
                             Ganti File
                           </button>
-                          <button 
+                          <button
                             type="button"
                             className="px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-xl text-xs font-bold transition-colors cursor-pointer"
                             onClick={handleRemoveFile}
@@ -871,27 +987,6 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
                         </div>
                       </div>
                     )}
-                  </div>
-                )}
-
-                {/* Link Submission Section */}
-                {activeSubmitTab === 'link' && (
-                  <div className="space-y-3">
-                    <div className="group">
-                      <label className="block text-xs font-semibold text-on-surface-variant mb-2">
-                        Link Tugas (Google Drive / GitHub)
-                      </label>
-                      <div className="flex items-center border border-outline-variant/60 rounded-xl p-3 bg-gray-50 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/10 transition-all">
-                        <LinkIcon className="text-on-surface-variant w-4 h-4 mr-2 shrink-0" />
-                        <input 
-                          className="w-full bg-transparent border-none focus:ring-0 p-0 text-xs font-medium placeholder:text-gray-400 outline-none text-primary" 
-                          placeholder="https://github.com/username/project" 
-                          type="url"
-                          value={submissionLink}
-                          onChange={(e) => setSubmissionLink(e.target.value)}
-                        />
-                      </div>
-                    </div>
                   </div>
                 )}
               </div>
@@ -918,8 +1013,8 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
               onClick={handleSubmitSubmission}
               disabled={isUploading}
             >
-              {isUploading 
-                ? 'Sedang mengunggah...' 
+              {isUploading
+                ? 'Sedang mengunggah ke Google Drive...'
                 : selectedAssignment.assignmentStatus === 'closed'
                 ? `Kumpulkan (${selectedAssignment.title} Closed)`
                 : 'Kumpulkan Tugas Sekarang'}
@@ -1261,16 +1356,34 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
                         </div>
                         
                         {task.submittedFile && (
-                          <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg text-[10px] font-semibold text-primary">
-                            <FileText className="w-4 h-4 text-secondary" />
-                            <span>File: {task.submittedFile}</span>
+                          <div
+                            onClick={() => handleDownloadSubmittedFile(task.submittedFile)}
+                            className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200/80 p-2.5 rounded-xl text-xs font-semibold text-slate-800 hover:bg-slate-100 transition-all cursor-pointer"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <FileText className="w-4 h-4 text-red-500 shrink-0" />
+                              <span className="truncate">{task.submittedFile.split('/').pop()?.replace(/^\d+-/, '') || task.submittedFile}</span>
+                            </div>
+                            <span className="text-[10px] font-bold text-slate-700 bg-white px-2 py-0.5 rounded-md border border-slate-200 shrink-0 inline-flex items-center gap-1">
+                              <Download className="w-3 h-3" /> Unduh
+                            </span>
                           </div>
                         )}
 
                         {task.submittedLink && (
-                          <a href={task.submittedLink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg text-[10px] font-semibold text-secondary hover:underline">
-                            <LinkIcon className="w-4 h-4 text-primary" />
-                            <span>Link: {task.submittedLink}</span>
+                          <a
+                            href={normalizeUrl(task.submittedLink)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center justify-between gap-2 bg-emerald-50/70 border border-emerald-200/80 p-2.5 rounded-xl text-xs font-semibold text-emerald-900 hover:bg-emerald-100/70 transition-all"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <LinkIcon className="w-4 h-4 text-emerald-600 shrink-0" />
+                              <span className="truncate">{task.submittedLink}</span>
+                            </div>
+                            <span className="text-[10px] font-bold text-emerald-700 bg-white px-2 py-0.5 rounded-md border border-emerald-200 shrink-0 inline-flex items-center gap-1">
+                              <ExternalLink className="w-3 h-3" /> Buka
+                            </span>
                           </a>
                         )}
 
@@ -1388,60 +1501,94 @@ export default function StudentPortal({ user, onLogout }: StudentPortalProps) {
                         <div className="grid grid-cols-1 gap-3">
                           {meetingMaterials.map((mat) => {
                             if (mat.material_type === 'file') {
+                              const isGDrive = isGoogleDriveUrl(mat.file_path);
                               return (
-                                <div 
+                                <div
                                   key={mat.id}
-                                  className="bg-white p-4 rounded-xl border border-outline-variant/30 auth-card-shadow flex items-center justify-between gap-4"
+                                  className={`bg-white p-4 rounded-xl border ${isGDrive ? 'border-emerald-200 bg-emerald-50/20' : 'border-outline-variant/30'} auth-card-shadow flex items-center justify-between gap-4`}
                                 >
                                   <div className="flex items-center gap-3 min-w-0">
-                                    <div className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center text-primary shrink-0">
-                                      {mat.file_path?.endsWith('.pdf') ? (
+                                    <div className={`w-10 h-10 rounded-xl ${isGDrive ? 'bg-emerald-100/60 text-emerald-700' : 'bg-gray-50 text-primary'} flex items-center justify-center shrink-0`}>
+                                      {isGDrive ? (
+                                        <LinkIcon className="w-5 h-5 text-emerald-600" />
+                                      ) : mat.file_path?.endsWith('.pdf') ? (
                                         <FileText className="w-5 h-5 text-red-500" />
                                       ) : (
                                         <FileSpreadsheet className="w-5 h-5 text-green-600" />
                                       )}
                                     </div>
                                     <div className="min-w-0">
-                                      <h4 className="text-xs font-bold text-primary truncate max-w-[200px] sm:max-w-md">{mat.title}</h4>
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <h4 className="text-xs font-bold text-primary truncate max-w-[200px] sm:max-w-md">{mat.title}</h4>
+                                        {isGDrive && (
+                                          <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-200">
+                                            Google Drive
+                                          </span>
+                                        )}
+                                      </div>
                                       <p className="text-[9px] text-on-surface-variant font-semibold mt-0.5 capitalize">
-                                        Berkas Unduhan
+                                        {isGDrive ? 'Tautan Materi Google Drive' : 'Berkas Unduhan'}
                                       </p>
                                     </div>
                                   </div>
 
                                   <button
                                     onClick={() => handleDownloadMaterialFile(mat.file_path, mat.title)}
-                                    className="p-2 text-secondary bg-secondary/10 border border-secondary/20 rounded-xl hover:bg-secondary/15 transition-all cursor-pointer shrink-0"
-                                    title="Unduh Berkas"
+                                    className={`p-2 rounded-xl transition-all cursor-pointer shrink-0 inline-flex items-center gap-1.5 ${
+                                      isGDrive
+                                        ? 'px-3 py-1.5 text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm'
+                                        : 'text-secondary bg-secondary/10 border border-secondary/20 hover:bg-secondary/15'
+                                    }`}
+                                    title={isGDrive ? "Buka di Google Drive" : "Unduh Berkas"}
                                   >
-                                    <Download className="w-4 h-4" />
+                                    {isGDrive ? (
+                                      <>
+                                        <span>Buka</span>
+                                        <ExternalLink className="w-3.5 h-3.5" />
+                                      </>
+                                    ) : (
+                                      <Download className="w-4 h-4" />
+                                    )}
                                   </button>
                                 </div>
                               );
                             } else if (mat.material_type === 'link') {
+                              const isGDrive = isGoogleDriveUrl(mat.external_url);
                               return (
-                                <div 
+                                <div
                                   key={mat.id}
-                                  className="bg-white p-4 rounded-xl border border-outline-variant/30 auth-card-shadow flex items-center justify-between gap-4"
+                                  className={`bg-white p-4 rounded-xl border ${isGDrive ? 'border-emerald-200 bg-emerald-50/20' : 'border-outline-variant/30'} auth-card-shadow flex items-center justify-between gap-4`}
                                 >
                                   <div className="flex items-center gap-3 min-w-0">
-                                    <div className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center text-primary shrink-0">
-                                      <Link2 className="w-5 h-5 text-primary" />
+                                    <div className={`w-10 h-10 rounded-xl ${isGDrive ? 'bg-emerald-100/60 text-emerald-700' : 'bg-gray-50 text-primary'} flex items-center justify-center shrink-0`}>
+                                      {isGDrive ? <LinkIcon className="w-5 h-5 text-emerald-600" /> : <Link2 className="w-5 h-5 text-primary" />}
                                     </div>
                                     <div className="min-w-0">
-                                      <h4 className="text-xs font-bold text-primary truncate max-w-[200px] sm:max-w-md">{mat.title}</h4>
-                                      <p className="text-[9px] text-on-surface-variant font-semibold mt-0.5 capitalize">
-                                        Tautan Eksternal
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <h4 className="text-xs font-bold text-primary truncate max-w-[200px] sm:max-w-md">{mat.title}</h4>
+                                        {isGDrive && (
+                                          <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-200">
+                                            Google Drive
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="text-[9px] text-on-surface-variant font-semibold mt-0.5 truncate max-w-[200px] sm:max-w-md">
+                                        {mat.external_url || 'Tautan Eksternal'}
                                       </p>
                                     </div>
                                   </div>
 
                                   <button
                                     onClick={() => handleOpenExternalLink(mat.external_url)}
-                                    className="p-2 text-secondary bg-secondary/10 border border-secondary/20 rounded-xl hover:bg-secondary/15 transition-all cursor-pointer shrink-0"
-                                    title="Buka Tautan"
+                                    className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer shrink-0 inline-flex items-center gap-1.5 ${
+                                      isGDrive
+                                        ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm'
+                                        : 'text-secondary bg-secondary/10 border border-secondary/20 hover:bg-secondary/15'
+                                    }`}
+                                    title={isGDrive ? "Buka di Google Drive" : "Buka Tautan"}
                                   >
-                                    <ExternalLink className="w-4 h-4" />
+                                    <span>Buka</span>
+                                    <ExternalLink className="w-3.5 h-3.5" />
                                   </button>
                                 </div>
                               );

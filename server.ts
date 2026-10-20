@@ -23,10 +23,50 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Enable JSON request body parsing
-  app.use(express.json());
+  // Enable JSON request body parsing with increased size limit for file uploads
+  app.use(express.json({ limit: "100mb" }));
+  app.use(express.urlencoded({ limit: "100mb", extended: true }));
 
   // --- API ROUTES ---
+
+  // Endpoint Upload Berkas Langsung ke Google Drive via Google Apps Script Webhook
+  app.post("/api/gdrive/upload", async (req, res) => {
+    try {
+      const gdriveScriptUrl = process.env.GDRIVE_SCRIPT_URL || process.env.VITE_GDRIVE_SCRIPT_URL;
+      if (!gdriveScriptUrl) {
+        return res.status(500).json({
+          error: "Konfigurasi GDRIVE_SCRIPT_URL belum disetel di file .env. Silakan pasang Web App URL dari Google Apps Script."
+        });
+      }
+
+      const { type, fileName, mimeType, base64 } = req.body;
+      if (!base64 || !fileName) {
+        return res.status(400).json({ error: "Data berkas (base64 dan fileName) wajib disertakan." });
+      }
+
+      const response = await fetch(gdriveScriptUrl, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ type, fileName, mimeType, base64 }),
+        redirect: "follow",
+      });
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        throw new Error(`Google Apps Script merespons dengan status ${response.status}: ${errText}`);
+      }
+
+      const data: any = await response.json();
+      if (!data.success) {
+        throw new Error(data.error || "Gagal menyimpan berkas ke Google Drive.");
+      }
+
+      res.json(data);
+    } catch (err: any) {
+      console.error("GDRIVE upload error:", err);
+      res.status(500).json({ error: err.message || "Gagal mengunggah berkas ke Google Drive." });
+    }
+  });
 
   // 1. Sync or create user profile on login
   app.post("/api/users/sync", requireAuth, async (req: AuthRequest, res) => {
@@ -231,6 +271,433 @@ async function startServer() {
     } catch (err: any) {
       console.error("Create lecturer server endpoint error:", err);
       return res.status(500).json({ error: err.message || "Internal server error" });
+    }
+  });
+
+  // Helper function: normalkan path storage agar tidak dobel nama bucket atau slash di awal
+  function cleanStoragePath(filePath: string, bucket: string): string {
+    let p = (filePath || '').trim().replace(/^\/+/, '');
+    if (p.startsWith(`${bucket}/`)) {
+      p = p.substring(bucket.length + 1);
+    }
+    return p;
+  }
+
+  // Helper function: Coba unduh berkas dengan berbagai kemungkinan path
+  async function attemptDownload(client: any, bucket: string, rawPath: string) {
+    const p1 = cleanStoragePath(rawPath, bucket);
+    try {
+      const res = await client.storage.from(bucket).download(p1);
+      if (res.data && !res.error) {
+        return { blob: res.data, actualPath: p1, error: null };
+      }
+      if (p1 !== rawPath) {
+        const res2 = await client.storage.from(bucket).download(rawPath);
+        if (res2.data && !res2.error) {
+          return { blob: res2.data, actualPath: rawPath, error: null };
+        }
+        return { blob: null, actualPath: p1, error: res.error || res2.error };
+      }
+      return { blob: null, actualPath: p1, error: res.error };
+    } catch (err: any) {
+      return { blob: null, actualPath: p1, error: err };
+    }
+  }
+
+  // Admin endpoint: Cek status berkas yang masih ada di Supabase Storage beserta diagnosa detailnya
+  app.get("/api/admin/migration-stats", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      const userSupabase = authHeader ? createClient(supabaseUrl, supabaseAnonKey, {
+        global: { headers: { Authorization: authHeader } },
+        auth: { persistSession: false, autoRefreshToken: false }
+      }) : null;
+
+      const client = supabaseAdmin || userSupabase || supabase;
+
+      const { data: subs, error: subErr } = await client
+        .from('submissions')
+        .select('id, file_path, submitted_link, student_id, assignment_id');
+
+      if (subErr) {
+        console.warn("Submissions query warning in migration-stats:", subErr.message);
+      }
+
+      const { data: mats, error: matErr } = await client
+        .from('course_materials')
+        .select('id, file_path, title, material_type');
+
+      if (matErr) {
+        console.warn("Materials query warning in migration-stats:", matErr.message);
+      }
+
+      const pendingSubmissions = (subs || []).filter(s => {
+        if (!s.file_path) return false;
+        const p = s.file_path.trim().toLowerCase();
+        return !p.startsWith('http://') && !p.startsWith('https://');
+      });
+
+      const pendingMaterials = (mats || []).filter(m => {
+        if (m.material_type !== 'file' || !m.file_path) return false;
+        const p = m.file_path.trim().toLowerCase();
+        return !p.startsWith('http://') && !p.startsWith('https://');
+      });
+
+      // Lakukan diagnosa pada setiap berkas yang tertunda
+      const detailedSubs = await Promise.all(pendingSubmissions.map(async (s) => {
+        const dl = await attemptDownload(client, 'assignment-submissions', s.file_path);
+        let status = 'READY';
+        let reason = 'Berkas ditemukan di Storage, siap dipindahkan.';
+        if (!dl.blob) {
+          const errMsg = dl.error?.message?.toLowerCase() || '';
+          const is404 = errMsg.includes('not found') || dl.error?.statusCode === 404 || dl.error?.statusCode === '404' || errMsg.includes('resource');
+          const isRls = errMsg.includes('security') || errMsg.includes('permission') || errMsg.includes('policy') || errMsg.includes('unauthorized');
+
+          if (is404) {
+            status = 'NOT_FOUND';
+            reason = 'Berkas fisik tidak ditemukan di Supabase Storage (404). File ini tidak memakan kuota fisik.';
+          } else if (isRls) {
+            status = 'RLS_DENIED';
+            reason = 'Akses ditolak oleh RLS Supabase Storage. Butuh SUPABASE_SERVICE_ROLE_KEY.';
+          } else {
+            status = 'ERROR';
+            reason = dl.error?.message || 'Gagal mengakses berkas di storage.';
+          }
+        }
+        return {
+          id: s.id,
+          filePath: s.file_path,
+          cleanPath: dl.actualPath,
+          status,
+          reason,
+          size: dl.blob?.size || 0,
+        };
+      }));
+
+      const detailedMats = await Promise.all(pendingMaterials.map(async (m) => {
+        const dl = await attemptDownload(client, 'course-materials', m.file_path);
+        let status = 'READY';
+        let reason = 'Berkas ditemukan di Storage, siap dipindahkan.';
+        if (!dl.blob) {
+          const errMsg = dl.error?.message?.toLowerCase() || '';
+          const is404 = errMsg.includes('not found') || dl.error?.statusCode === 404 || dl.error?.statusCode === '404' || errMsg.includes('resource');
+          const isRls = errMsg.includes('security') || errMsg.includes('permission') || errMsg.includes('policy') || errMsg.includes('unauthorized');
+
+          if (is404) {
+            status = 'NOT_FOUND';
+            reason = 'Berkas fisik tidak ditemukan di Supabase Storage (404). File ini tidak memakan kuota fisik.';
+          } else if (isRls) {
+            status = 'RLS_DENIED';
+            reason = 'Akses ditolak oleh RLS Supabase Storage. Butuh SUPABASE_SERVICE_ROLE_KEY.';
+          } else {
+            status = 'ERROR';
+            reason = dl.error?.message || 'Gagal mengakses berkas di storage.';
+          }
+        }
+        return {
+          id: m.id,
+          title: m.title || 'Materi Perkuliahan',
+          filePath: m.file_path,
+          cleanPath: dl.actualPath,
+          status,
+          reason,
+          size: dl.blob?.size || 0,
+        };
+      }));
+
+      const notFoundCount = detailedSubs.filter(s => s.status === 'NOT_FOUND').length +
+                            detailedMats.filter(m => m.status === 'NOT_FOUND').length;
+      const rlsDeniedCount = detailedSubs.filter(s => s.status === 'RLS_DENIED').length +
+                             detailedMats.filter(m => m.status === 'RLS_DENIED').length;
+      const readyCount = detailedSubs.filter(s => s.status === 'READY').length +
+                         detailedMats.filter(m => m.status === 'READY').length;
+
+      res.json({
+        pendingSubmissionsCount: pendingSubmissions.length,
+        pendingMaterialsCount: pendingMaterials.length,
+        totalPending: pendingSubmissions.length + pendingMaterials.length,
+        readyCount,
+        notFoundCount,
+        rlsDeniedCount,
+        gdriveConfigured: Boolean(process.env.GDRIVE_SCRIPT_URL || process.env.VITE_GDRIVE_SCRIPT_URL),
+        serviceRoleActive: Boolean(supabaseAdmin),
+        subError: subErr?.message,
+        matError: matErr?.message,
+        detailedSubmissions: detailedSubs,
+        detailedMaterials: detailedMats,
+        pendingSubmissionsList: pendingSubmissions.map(s => ({ id: s.id, file_path: s.file_path, submitted_link: s.submitted_link })),
+        pendingMaterialsList: pendingMaterials.map(m => ({ id: m.id, file_path: m.file_path, title: m.title })),
+      });
+    } catch (err: any) {
+      console.error("Fetch migration stats error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Admin endpoint: Bersihkan referensi berkas rusak (404) yang tidak ada fisiknya di storage Supabase
+  app.post("/api/admin/clean-orphan-files", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const callerUid = req.user!.uid;
+      const authHeader = req.headers.authorization;
+      const userSupabase = authHeader ? createClient(supabaseUrl, supabaseAnonKey, {
+        global: { headers: { Authorization: authHeader } },
+        auth: { persistSession: false, autoRefreshToken: false }
+      }) : null;
+      const client = supabaseAdmin || userSupabase || supabase;
+
+      const { data: profile } = await client
+        .from('profiles')
+        .select('role')
+        .eq('id', callerUid)
+        .maybeSingle();
+
+      if (!profile || profile.role !== 'admin') {
+        return res.status(403).json({ error: "Hanya Administrator yang berwenang membersihkan data." });
+      }
+
+      let cleanedSubs = 0;
+      let cleanedMats = 0;
+
+      // 1. Ambil dan bersihkan submissions yang berkas fisiknya 404
+      const { data: subs } = await client.from('submissions').select('id, file_path, submitted_note');
+      const pendingSubs = (subs || []).filter(s => s.file_path && !s.file_path.startsWith('http'));
+
+      for (const s of pendingSubs) {
+        const dl = await attemptDownload(client, 'assignment-submissions', s.file_path);
+        if (!dl.blob) {
+          const errMsg = dl.error?.message?.toLowerCase() || '';
+          const is404 = errMsg.includes('not found') || dl.error?.statusCode === 404 || dl.error?.statusCode === '404' || errMsg.includes('resource');
+          if (is404) {
+            await client.from('submissions').update({
+              file_path: null,
+              submitted_note: s.submitted_note ? `${s.submitted_note} [Berkas fisik 404 sebelum migrasi]` : '[Berkas fisik 404 sebelum migrasi]',
+            }).eq('id', s.id);
+            cleanedSubs++;
+          }
+        }
+      }
+
+      // 2. Ambil dan bersihkan course_materials yang berkas fisiknya 404
+      const { data: mats } = await client.from('course_materials').select('id, file_path, material_type');
+      const pendingMats = (mats || []).filter(m => m.material_type === 'file' && m.file_path && !m.file_path.startsWith('http'));
+
+      for (const m of pendingMats) {
+        const dl = await attemptDownload(client, 'course-materials', m.file_path);
+        if (!dl.blob) {
+          const errMsg = dl.error?.message?.toLowerCase() || '';
+          const is404 = errMsg.includes('not found') || dl.error?.statusCode === 404 || dl.error?.statusCode === '404' || errMsg.includes('resource');
+          if (is404) {
+            await client.from('course_materials').update({
+              material_type: 'link',
+              file_path: null,
+              external_url: null,
+            }).eq('id', m.id);
+            cleanedMats++;
+          }
+        }
+      }
+
+      res.json({
+        success: true,
+        cleanedSubs,
+        cleanedMats,
+        totalCleaned: cleanedSubs + cleanedMats,
+      });
+    } catch (err: any) {
+      console.error("Clean orphan files endpoint error:", err);
+      res.status(500).json({ error: err.message || "Gagal membersihkan data orphan" });
+    }
+  });
+
+  // Admin endpoint: Jalankan migrasi seluruh berkas Supabase Storage ke Google Drive
+  app.post("/api/admin/migrate-to-gdrive", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const callerUid = req.user!.uid;
+      const authHeader = req.headers.authorization;
+      const userSupabase = authHeader ? createClient(supabaseUrl, supabaseAnonKey, {
+        global: { headers: { Authorization: authHeader } },
+        auth: { persistSession: false, autoRefreshToken: false }
+      }) : null;
+
+      const client = supabaseAdmin || userSupabase || supabase;
+      const gdriveUrl = process.env.GDRIVE_SCRIPT_URL || process.env.VITE_GDRIVE_SCRIPT_URL;
+
+      if (!gdriveUrl) {
+        return res.status(500).json({ error: "GDRIVE_SCRIPT_URL belum disetel di .env" });
+      }
+
+      // 1. Verifikasi Admin
+      const { data: profile } = await client
+        .from('profiles')
+        .select('role')
+        .eq('id', callerUid)
+        .maybeSingle();
+
+      if (!profile || profile.role !== 'admin') {
+        return res.status(403).json({ error: "Hanya Administrator yang berwenang menjalankan migrasi storage." });
+      }
+
+      // 2. Ambil berkas tugas yang belum dipindahkan
+      const { data: subs } = await client
+        .from('submissions')
+        .select('id, file_path, submitted_link');
+
+      const pendingSubs = (subs || []).filter(s => {
+        if (!s.file_path) return false;
+        const p = s.file_path.trim().toLowerCase();
+        return !p.startsWith('http://') && !p.startsWith('https://');
+      });
+
+      // 3. Ambil berkas materi yang belum dipindahkan
+      const { data: mats } = await client
+        .from('course_materials')
+        .select('id, file_path, title, material_type');
+
+      const pendingMats = (mats || []).filter(m => {
+        if (m.material_type !== 'file' || !m.file_path) return false;
+        const p = m.file_path.trim().toLowerCase();
+        return !p.startsWith('http://') && !p.startsWith('https://');
+      });
+
+      let movedSubs = 0;
+      let movedMats = 0;
+      let bytesFreed = 0;
+      const errors: string[] = [];
+
+      // Migrasi Tugas Mahasiswa
+      for (const sub of pendingSubs) {
+        try {
+          const dl = await attemptDownload(client, 'assignment-submissions', sub.file_path);
+          if (!dl.blob) {
+            const errMsg = dl.error?.message?.toLowerCase() || '';
+            const is404 = errMsg.includes('not found') || dl.error?.statusCode === 404 || dl.error?.statusCode === '404' || errMsg.includes('resource');
+            const isRls = errMsg.includes('security') || errMsg.includes('permission') || errMsg.includes('policy') || errMsg.includes('unauthorized');
+
+            if (is404) {
+              throw new Error(`404 Not Found: Berkas fisik tidak ada di bucket 'assignment-submissions'`);
+            } else if (isRls) {
+              throw new Error(`RLS Denied: Izin Supabase Storage membatasi unduhan`);
+            } else {
+              throw new Error(`Gagal unduh file dari Supabase: ${dl.error?.message || 'File tidak ada'}`);
+            }
+          }
+
+          const arrayBuffer = await dl.blob.arrayBuffer();
+          const fileSize = arrayBuffer.byteLength;
+          const base64 = Buffer.from(arrayBuffer).toString('base64');
+          const cleanName = sub.file_path.split('/').pop()?.replace(/^\d+-/, '') || 'tugas-mahasiswa.pdf';
+
+          const gdriveRes = await fetch(gdriveUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({
+              type: 'submission',
+              fileName: cleanName,
+              mimeType: dl.blob.type || 'application/octet-stream',
+              base64,
+            }),
+          });
+
+          const gdriveData: any = await gdriveRes.json();
+          if (!gdriveData.success || !gdriveData.fileUrl) {
+            throw new Error(gdriveData.error || 'Gagal simpan ke GDrive');
+          }
+
+          // Update DB
+          await client
+            .from('submissions')
+            .update({
+              file_path: gdriveData.fileUrl,
+              submitted_link: sub.submitted_link || gdriveData.fileUrl,
+            })
+            .eq('id', sub.id);
+
+          // Hapus dari Supabase Storage
+          await client.storage
+            .from('assignment-submissions')
+            .remove([dl.actualPath]);
+
+          bytesFreed += fileSize;
+          movedSubs++;
+        } catch (sErr: any) {
+          console.error(`Error migrating submission ${sub.id}:`, sErr);
+          errors.push(`Tugas (${sub.id}): ${sErr.message}`);
+        }
+      }
+
+      // Migrasi Materi Dosen
+      for (const mat of pendingMats) {
+        try {
+          const dl = await attemptDownload(client, 'course-materials', mat.file_path);
+          if (!dl.blob) {
+            const errMsg = dl.error?.message?.toLowerCase() || '';
+            const is404 = errMsg.includes('not found') || dl.error?.statusCode === 404 || dl.error?.statusCode === '404' || errMsg.includes('resource');
+            const isRls = errMsg.includes('security') || errMsg.includes('permission') || errMsg.includes('policy') || errMsg.includes('unauthorized');
+
+            if (is404) {
+              throw new Error(`404 Not Found: Berkas fisik tidak ada di bucket 'course-materials'`);
+            } else if (isRls) {
+              throw new Error(`RLS Denied: Izin Supabase Storage membatasi unduhan`);
+            } else {
+              throw new Error(`Gagal unduh materi dari Supabase: ${dl.error?.message || 'File tidak ada'}`);
+            }
+          }
+
+          const arrayBuffer = await dl.blob.arrayBuffer();
+          const fileSize = arrayBuffer.byteLength;
+          const base64 = Buffer.from(arrayBuffer).toString('base64');
+          const cleanName = mat.file_path.split('/').pop()?.replace(/^\d+-[a-z0-9]+-/, '') || `${mat.title}.pdf`;
+
+          const gdriveRes = await fetch(gdriveUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({
+              type: 'material',
+              fileName: cleanName,
+              mimeType: dl.blob.type || 'application/octet-stream',
+              base64,
+            }),
+          });
+
+          const gdriveData: any = await gdriveRes.json();
+          if (!gdriveData.success || !gdriveData.fileUrl) {
+            throw new Error(gdriveData.error || 'Gagal simpan materi ke GDrive');
+          }
+
+          // Update DB
+          await client
+            .from('course_materials')
+            .update({
+              material_type: 'link',
+              file_path: gdriveData.fileUrl,
+              external_url: gdriveData.fileUrl,
+            })
+            .eq('id', mat.id);
+
+          // Hapus dari Supabase Storage
+          await client.storage
+            .from('course-materials')
+            .remove([dl.actualPath]);
+
+          bytesFreed += fileSize;
+          movedMats++;
+        } catch (mErr: any) {
+          console.error(`Error migrating material ${mat.id}:`, mErr);
+          errors.push(`Materi (${mat.title}): ${mErr.message}`);
+        }
+      }
+
+      res.json({
+        success: true,
+        movedSubmissions: movedSubs,
+        movedMaterials: movedMats,
+        bytesFreed,
+        mbFreed: (bytesFreed / (1024 * 1024)).toFixed(2),
+        errors: errors.length > 0 ? errors : undefined,
+      });
+    } catch (err: any) {
+      console.error("Migrate to GDrive endpoint error:", err);
+      res.status(500).json({ error: err.message || "Gagal memproses migrasi berkas" });
     }
   });
 

@@ -1,17 +1,19 @@
 import React, { useState, useEffect, useMemo, startTransition } from 'react';
-import { 
-  LayoutDashboard, Presentation, BookOpen, GraduationCap, Layers, Activity, 
-  Settings, LogOut, Search, Plus, Filter, Trash2, Edit3, CheckCircle2, 
+import {
+  LayoutDashboard, Presentation, BookOpen, GraduationCap, Layers, Activity,
+  Settings, LogOut, Search, Plus, Filter, Trash2, Edit3, CheckCircle2,
   AlertTriangle, Shield, UserPlus, Database, Lock, Server,
   Menu, X, RefreshCw, ChevronRight, ChevronLeft, UserCheck,
-  Check, ArrowRight, Eye, Ban, Calendar, Clock, School, 
-  FileText, CheckSquare, UploadCloud, Info, Bell, Users
+  Check, ArrowRight, Eye, Ban, Calendar, Clock, School,
+  FileText, CheckSquare, UploadCloud, Info, Bell, Users,
+  HardDrive, ExternalLink, Loader2, CloudDownload
 } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, AreaChart, Area, CartesianGrid } from 'recharts';
 import { createClient } from '@supabase/supabase-js';
 import { User } from '../types';
 import { supabase, supabaseUrl, supabaseAnonKey } from '../lib/supabase';
 import { COURSES } from '../data';
+import { uploadBase64ToGDrive, blobToBase64 } from '../lib/gdrive';
 
 interface AdminPortalProps {
   user: User;
@@ -117,6 +119,51 @@ export default function AdminPortal({ user, onLogout }: AdminPortalProps) {
   const [classSearch, setClassSearch] = useState('');
   const [activitySearch, setActivitySearch] = useState('');
   const [activityActionFilter, setActivityActionFilter] = useState('ALL');
+
+  // --- Storage & Google Drive Migration State ---
+  const [migrationStats, setMigrationStats] = useState<{
+    pendingSubmissionsCount: number;
+    pendingMaterialsCount: number;
+    totalPending: number;
+    readyCount?: number;
+    notFoundCount?: number;
+    rlsDeniedCount?: number;
+    gdriveConfigured: boolean;
+    serviceRoleActive?: boolean;
+    checkedVia?: 'server' | 'direct' | 'none';
+    needsRlsPolicy?: boolean;
+    detailedSubmissions?: Array<{
+      id: string;
+      filePath: string;
+      cleanPath?: string;
+      status: string;
+      reason: string;
+      size?: number;
+    }>;
+    detailedMaterials?: Array<{
+      id: string;
+      title: string;
+      filePath: string;
+      cleanPath?: string;
+      status: string;
+      reason: string;
+      size?: number;
+    }>;
+    pendingSubmissionsList?: any[];
+    pendingMaterialsList?: any[];
+  } | null>(null);
+  const [isLoadingMigrationStats, setIsLoadingMigrationStats] = useState(false);
+  const [isMigratingStorage, setIsMigratingStorage] = useState(false);
+  const [isCleaningOrphans, setIsCleaningOrphans] = useState(false);
+  const [showDetailedList, setShowDetailedList] = useState(false);
+  const [migrationResult, setMigrationResult] = useState<{
+    success: boolean;
+    movedSubmissions: number;
+    movedMaterials: number;
+    bytesFreed: number;
+    mbFreed: string;
+    errors?: string[];
+  } | null>(null);
 
   const getInitials = (name: string) => {
     if (!name) return 'AD';
@@ -317,6 +364,329 @@ export default function AdminPortal({ user, onLogout }: AdminPortalProps) {
   useEffect(() => {
     loadSystemData();
   }, []);
+
+  const fetchMigrationStats = async () => {
+    setIsLoadingMigrationStats(true);
+    showBanner('info', 'Memeriksa berkas di database dan storage Supabase...');
+    try {
+      let statsData: any = null;
+      let checkedSource: 'server' | 'direct' = 'server';
+
+      // 1. Coba periksa via endpoint backend server
+      try {
+        const sessionRes = await supabase.auth.getSession();
+        const token = sessionRes.data.session?.access_token || '';
+
+        const res = await fetch('/api/admin/migration-stats', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (res.ok) {
+          const sJson = await res.json();
+          if (sJson && typeof sJson.totalPending === 'number') {
+            statsData = sJson;
+            checkedSource = 'server';
+          }
+        }
+      } catch (beErr) {
+        console.warn('Backend migration-stats request failed, fallback to direct query:', beErr);
+      }
+
+      // 2. Jika backend menghasilkan 0 atau gagal dihubungi,
+      // periksa langsung menggunakan Supabase client browser
+      if (!statsData || statsData.totalPending === 0) {
+        try {
+          const { data: subs, error: subErr } = await supabase
+            .from('submissions')
+            .select('id, file_path, submitted_link, student_id, assignment_id');
+
+          const { data: mats, error: matErr } = await supabase
+            .from('course_materials')
+            .select('id, file_path, title, material_type');
+
+          const pendingSubs = (subs || []).filter(s => {
+            if (!s.file_path) return false;
+            const p = s.file_path.trim().toLowerCase();
+            return !p.startsWith('http://') && !p.startsWith('https://');
+          });
+
+          const pendingMats = (mats || []).filter(m => {
+            if (m.material_type !== 'file' || !m.file_path) return false;
+            const p = m.file_path.trim().toLowerCase();
+            return !p.startsWith('http://') && !p.startsWith('https://');
+          });
+
+          const directTotal = pendingSubs.length + pendingMats.length;
+          const isRlsRestricted = Boolean(
+            subErr || matErr ||
+            (subs?.length === 0 && (statsData?.totalPending === 0 || !statsData))
+          );
+
+          if (!statsData || directTotal > 0 || isRlsRestricted) {
+            statsData = {
+              pendingSubmissionsCount: pendingSubs.length,
+              pendingMaterialsCount: pendingMats.length,
+              totalPending: directTotal,
+              gdriveConfigured: Boolean((import.meta as any).env?.VITE_GDRIVE_SCRIPT_URL),
+              checkedVia: 'direct',
+              needsRlsPolicy: isRlsRestricted && directTotal === 0,
+              pendingSubmissionsList: pendingSubs,
+              pendingMaterialsList: pendingMats,
+            };
+            checkedSource = 'direct';
+          }
+        } catch (clientCheckErr) {
+          console.error('Direct Supabase check error:', clientCheckErr);
+        }
+      }
+
+      if (statsData) {
+        statsData.checkedVia = statsData.checkedVia || checkedSource;
+        setMigrationStats(statsData);
+        if (statsData.totalPending > 0) {
+          showBanner('success', `Ditemukan ${statsData.totalPending} berkas (${statsData.pendingSubmissionsCount} tugas, ${statsData.pendingMaterialsCount} materi) yang dapat dipindahkan ke Google Drive.`);
+        } else {
+          showBanner('info', 'Hasil periksa: 0 berkas terdeteksi di storage Supabase.');
+        }
+      } else {
+        throw new Error('Tidak dapat terhubung ke server maupun database Supabase.');
+      }
+    } catch (err: any) {
+      console.error('Error fetching migration stats:', err);
+      showBanner('error', `Gagal memeriksa berkas: ${err.message || 'Koneksi terputus'}`);
+    } finally {
+      setIsLoadingMigrationStats(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'settings') {
+      fetchMigrationStats();
+    }
+  }, [activeTab]);
+
+  const handleMigrateToGDrive = async () => {
+    if (!window.confirm('Apakah Anda yakin ingin memindahkan seluruh berkas tugas dan materi dari Supabase Storage ke Google Drive?\n\nBerkas lama di Supabase akan dihapus setelah sukses dipindahkan ke Drive agar kuota storage Supabase kembali kosong/berkurang.')) {
+      return;
+    }
+
+    setIsMigratingStorage(true);
+    setMigrationResult(null);
+    showBanner('info', 'Memulai proses migrasi berkas ke Google Drive...');
+
+    try {
+      let migratedViaBackend = false;
+      let backendData: any = null;
+
+      // 1. Coba lewat backend server terlebih dahulu
+      try {
+        const sessionRes = await supabase.auth.getSession();
+        const token = sessionRes.data.session?.access_token || '';
+
+        const res = await fetch('/api/admin/migrate-to-gdrive', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (res.ok) {
+          backendData = await res.json();
+          if (backendData?.success) {
+            migratedViaBackend = true;
+            setMigrationResult(backendData);
+            showBanner('success', `Migrasi berhasil! ${backendData.movedSubmissions} tugas & ${backendData.movedMaterials} materi telah dipindahkan ke Drive (±${backendData.mbFreed} MB dibebaskan).`);
+          }
+        }
+      } catch (beErr) {
+        console.warn('Backend migration endpoint unavailable, trying client-side migration:', beErr);
+      }
+
+      // 2. Jika backend tidak berhasil atau offline, jalankan migrasi langsung via client browser
+      if (!migratedViaBackend) {
+        let movedSubs = 0;
+        let movedMats = 0;
+        let bytesFreed = 0;
+        const errors: string[] = [];
+
+        // Ambil pending submissions
+        const pendingSubs = migrationStats?.pendingSubmissionsList || [];
+        for (const sub of pendingSubs) {
+          try {
+            const rawPath = (sub.file_path || '').trim();
+            let cleanPath = rawPath.replace(/^\/+/, '');
+            if (cleanPath.startsWith('assignment-submissions/')) {
+              cleanPath = cleanPath.substring('assignment-submissions/'.length);
+            }
+
+            let { data: blob, error: dlErr } = await supabase.storage
+              .from('assignment-submissions')
+              .download(cleanPath);
+
+            if (!blob && cleanPath !== rawPath) {
+              const retry = await supabase.storage
+                .from('assignment-submissions')
+                .download(rawPath);
+              if (retry.data) {
+                blob = retry.data;
+                dlErr = null;
+              }
+            }
+
+            if (dlErr || !blob) {
+              throw new Error(`Unduh berkas gagal: ${dlErr?.message || 'Berkas tidak ditemukan'}`);
+            }
+
+            const cleanName = sub.file_path.split('/').pop()?.replace(/^\d+-/, '') || 'tugas-mahasiswa.pdf';
+            const base64 = await blobToBase64(blob);
+            const gdriveRes = await uploadBase64ToGDrive(base64, cleanName, blob.type, 'submission');
+
+            // Update database
+            await supabase
+              .from('submissions')
+              .update({
+                file_path: gdriveRes.fileUrl,
+                submitted_link: sub.submitted_link || gdriveRes.fileUrl,
+              })
+              .eq('id', sub.id);
+
+            // Hapus dari storage Supabase
+            const deleteKeys = [cleanPath];
+            if (rawPath !== cleanPath) deleteKeys.push(rawPath);
+            await supabase.storage
+              .from('assignment-submissions')
+              .remove(deleteKeys);
+
+            bytesFreed += blob.size;
+            movedSubs++;
+          } catch (subErr: any) {
+            console.error(`Gagal memindahkan tugas ${sub.id}:`, subErr);
+            errors.push(`Tugas (${sub.id}): ${subErr.message}`);
+          }
+        }
+
+        // Ambil pending materials
+        const pendingMats = migrationStats?.pendingMaterialsList || [];
+        for (const mat of pendingMats) {
+          try {
+            const rawPath = (mat.file_path || '').trim();
+            let cleanPath = rawPath.replace(/^\/+/, '');
+            if (cleanPath.startsWith('course-materials/')) {
+              cleanPath = cleanPath.substring('course-materials/'.length);
+            }
+
+            let { data: blob, error: dlErr } = await supabase.storage
+              .from('course-materials')
+              .download(cleanPath);
+
+            if (!blob && cleanPath !== rawPath) {
+              const retry = await supabase.storage
+                .from('course-materials')
+                .download(rawPath);
+              if (retry.data) {
+                blob = retry.data;
+                dlErr = null;
+              }
+            }
+
+            if (dlErr || !blob) {
+              throw new Error(`Unduh materi gagal: ${dlErr?.message || 'Berkas tidak ditemukan'}`);
+            }
+
+            const cleanName = mat.file_path.split('/').pop()?.replace(/^\d+-[a-z0-9]+-/, '') || `${mat.title}.pdf`;
+            const base64 = await blobToBase64(blob);
+            const gdriveRes = await uploadBase64ToGDrive(base64, cleanName, blob.type, 'material');
+
+            // Update database
+            await supabase
+              .from('course_materials')
+              .update({
+                material_type: 'link',
+                file_path: gdriveRes.fileUrl,
+                external_url: gdriveRes.fileUrl,
+              })
+              .eq('id', mat.id);
+
+            // Hapus dari storage Supabase
+            const deleteKeys = [cleanPath];
+            if (rawPath !== cleanPath) deleteKeys.push(rawPath);
+            await supabase.storage
+              .from('course-materials')
+              .remove(deleteKeys);
+
+            bytesFreed += blob.size;
+            movedMats++;
+          } catch (matErr: any) {
+            console.error(`Gagal memindahkan materi ${mat.id}:`, matErr);
+            errors.push(`Materi (${mat.title}): ${matErr.message}`);
+          }
+        }
+
+        if (movedSubs > 0 || movedMats > 0) {
+          const mbFreed = (bytesFreed / (1024 * 1024)).toFixed(2);
+          const clientResult = {
+            success: true,
+            movedSubmissions: movedSubs,
+            movedMaterials: movedMats,
+            bytesFreed,
+            mbFreed,
+            errors: errors.length > 0 ? errors : undefined,
+          };
+          setMigrationResult(clientResult);
+          showBanner('success', `Migrasi berhasil! ${movedSubs} tugas & ${movedMats} materi telah dipindahkan ke Drive (±${mbFreed} MB dibebaskan).`);
+        } else if (backendData?.error) {
+          throw new Error(backendData.error);
+        } else {
+          throw new Error('Tidak ada berkas yang berhasil dipindahkan. Periksa izin RLS Supabase atau konfigurasi Google Drive.');
+        }
+      }
+
+      fetchMigrationStats();
+      loadSystemData();
+    } catch (err: any) {
+      console.error('Migrate storage error:', err);
+      showBanner('error', `Gagal migrasi: ${err.message}`);
+    } finally {
+      setIsMigratingStorage(false);
+    }
+  };
+
+  const handleCleanOrphans = async () => {
+    if (!window.confirm('Bersihkan data referensi berkas yang berstatus 404 (tidak ditemukan fisiknya di Supabase Storage)?\n\nBerkas ini tidak ada di storage sehingga sebenarnya TIDAK memakan kuota. Tindakan ini akan mengosongkan path berkas rusak tersebut di database agar hitungan pending menjadi 0.')) {
+      return;
+    }
+
+    setIsCleaningOrphans(true);
+    try {
+      const sessionRes = await supabase.auth.getSession();
+      const token = sessionRes.data.session?.access_token || '';
+
+      const res = await fetch('/api/admin/clean-orphan-files', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Gagal membersihkan data referensi');
+      }
+
+      showBanner('success', `Berhasil membersihkan ${data.totalCleaned} referensi berkas 404 dari database.`);
+      fetchMigrationStats();
+      loadSystemData();
+    } catch (err: any) {
+      console.error('Clean orphans error:', err);
+      showBanner('error', `Gagal membersihkan data: ${err.message}`);
+    } finally {
+      setIsCleaningOrphans(false);
+    }
+  };
 
   const showBanner = (type: 'success' | 'error' | 'info', message: string) => {
     setFeedback({ type, message });
@@ -1961,6 +2331,314 @@ export default function AdminPortal({ user, onLogout }: AdminPortalProps) {
                       <CheckCircle2 className="w-3.5 h-3.5" /> Normal
                     </span>
                   </div>
+                </div>
+              </div>
+
+              {/* PENYIMPANAN & MIGRASI GOOGLE DRIVE */}
+              <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center shrink-0">
+                      <HardDrive className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900">Penyimpanan & Migrasi Google Drive</h3>
+                      <p className="text-xs text-slate-500">Pindahkan berkas tugas dan materi dari Supabase ke Google Drive untuk menghemat kuota</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={fetchMigrationStats}
+                    disabled={isLoadingMigrationStats || isMigratingStorage}
+                    className="self-start sm:self-center inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isLoadingMigrationStats ? 'animate-spin' : ''}`} />
+                    Periksa Berkas
+                  </button>
+                </div>
+
+                {/* Status Google Apps Script */}
+                <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-800">Status Google Drive Uploader:</span>
+                      {migrationStats?.gdriveConfigured ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100/70 border border-emerald-200 px-2 py-0.5 rounded-md">
+                          <CheckCircle2 className="w-3 h-3" /> Terkonfigurasi
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-100/70 border border-amber-200 px-2 py-0.5 rounded-md">
+                          <AlertTriangle className="w-3 h-3" /> Belum Dikonfigurasi di .env
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Semua unggahan baru tugas mahasiswa & materi dosen otomatis tersimpan langsung ke Google Drive.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Counter Kartu Berkas di Supabase */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="p-4 rounded-xl border border-slate-200/70 bg-slate-50/50">
+                    <span className="text-[11px] font-semibold text-slate-500 block mb-1">Tugas di Supabase</span>
+                    <div className="text-xl font-extrabold text-slate-900">
+                      {isLoadingMigrationStats ? (
+                        <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+                      ) : (
+                        migrationStats?.pendingSubmissionsCount ?? 0
+                      )}
+                    </div>
+                    <span className="text-[10px] text-slate-400 mt-1 block">Berkas tugas belum dipindahkan</span>
+                  </div>
+
+                  <div className="p-4 rounded-xl border border-slate-200/70 bg-slate-50/50">
+                    <span className="text-[11px] font-semibold text-slate-500 block mb-1">Materi di Supabase</span>
+                    <div className="text-xl font-extrabold text-slate-900">
+                      {isLoadingMigrationStats ? (
+                        <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+                      ) : (
+                        migrationStats?.pendingMaterialsCount ?? 0
+                      )}
+                    </div>
+                    <span className="text-[10px] text-slate-400 mt-1 block">Berkas materi belum dipindahkan</span>
+                  </div>
+
+                  <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/40">
+                    <span className="text-[11px] font-semibold text-amber-800 block mb-1">Total Perlu Dipindahkan</span>
+                    <div className="text-xl font-extrabold text-amber-900">
+                      {isLoadingMigrationStats ? (
+                        <Loader2 className="w-5 h-5 animate-spin text-amber-500" />
+                      ) : (
+                        migrationStats?.totalPending ?? 0
+                      )}
+                    </div>
+                    <span className="text-[10px] text-amber-700/80 mt-1 block">Menghabiskan kuota Supabase</span>
+                  </div>
+                </div>
+
+                {/* Status Diagnosa Berkas */}
+                {migrationStats && migrationStats.totalPending > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    {migrationStats.readyCount !== undefined && migrationStats.readyCount > 0 && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> {migrationStats.readyCount} Berkas Siap Dipindahkan
+                      </span>
+                    )}
+                    {migrationStats.notFoundCount !== undefined && migrationStats.notFoundCount > 0 && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                        <AlertTriangle className="w-3.5 h-3.5" /> {migrationStats.notFoundCount} Berkas Fisik Tidak Ada di Storage (404)
+                      </span>
+                    )}
+                    {migrationStats.rlsDeniedCount !== undefined && migrationStats.rlsDeniedCount > 0 && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                        <Lock className="w-3.5 h-3.5" /> {migrationStats.rlsDeniedCount} Terhalang Izin RLS Supabase
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Penjelasan Khusus jika Berkas Berstatus 404 (Tidak Ada di Storage) */}
+                {migrationStats && (migrationStats.notFoundCount ?? 0) > 0 && (
+                  <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-xs space-y-3 animate-in fade-in">
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <span className="font-bold text-amber-900 block">
+                          Penyebab {migrationStats.notFoundCount} Berkas Belum Bisa Dipindahkan:
+                        </span>
+                        <p className="text-amber-800 leading-relaxed text-[11px]">
+                          Data pada tabel database masih mencantumkan nama berkas, namun <strong>berkas fisik aslinya sudah tidak ditemukan di Supabase Storage (404 Not Found)</strong>. Hal ini umum terjadi pada data uji coba/dummy lama atau berkas yang pernah dihapus sebelumnya.
+                        </p>
+                        <p className="text-amber-800 leading-relaxed text-[11px] font-semibold">
+                          💡 Berkas yang tidak ada ini <u>sama sekali tidak memakan kuota Supabase Storage</u>. Anda dapat membersihkan data referensinya agar daftar antrean menjadi bersih (0).
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-amber-200/60">
+                      <button
+                        type="button"
+                        onClick={() => setShowDetailedList(!showDetailedList)}
+                        className="text-[11px] font-bold text-amber-900 underline hover:text-amber-700 cursor-pointer"
+                      >
+                        {showDetailedList ? '▲ Sembunyikan Rincian Berkas' : '▼ Lihat Rincian & Diagnosa 28 Berkas'}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleCleanOrphans}
+                        disabled={isCleaningOrphans || isMigratingStorage}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-700 hover:bg-amber-800 text-white rounded-lg font-bold text-xs transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
+                      >
+                        {isCleaningOrphans ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                        Bersihkan Referensi Berkas Rusak ({migrationStats.notFoundCount})
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Tabel Rincian Diagnosa Berkas */}
+                {showDetailedList && migrationStats && (
+                  <div className="border border-slate-200 rounded-xl overflow-hidden text-xs animate-in fade-in">
+                    <div className="bg-slate-100/80 px-4 py-2.5 font-bold text-slate-800 flex justify-between items-center">
+                      <span>Rincian Diagnosa Berkas ({migrationStats.totalPending})</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowDetailedList(false)}
+                        className="text-slate-500 hover:text-slate-700 text-[11px]"
+                      >
+                        Tutup
+                      </button>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
+                      {/* Tugas Mahasiswa */}
+                      {migrationStats.detailedSubmissions?.map((s) => (
+                        <div key={s.id} className="p-3 hover:bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="space-y-0.5 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">Tugas</span>
+                              <span className="font-mono text-[11px] text-slate-700 truncate">{s.filePath}</span>
+                            </div>
+                            <p className="text-[10px] text-slate-500">{s.reason}</p>
+                          </div>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                            s.status === 'READY' ? 'bg-emerald-100 text-emerald-800' :
+                            s.status === 'NOT_FOUND' ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
+                          }`}>
+                            {s.status === 'READY' ? 'Siap Dipindah' : s.status === 'NOT_FOUND' ? '404 Tidak Ada' : 'RLS Terhalang'}
+                          </span>
+                        </div>
+                      ))}
+
+                      {/* Materi Dosen */}
+                      {migrationStats.detailedMaterials?.map((m) => (
+                        <div key={m.id} className="p-3 hover:bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="space-y-0.5 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-[10px] bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded">Materi</span>
+                              <span className="font-bold text-[11px] text-slate-900 truncate">"{m.title}"</span>
+                              <span className="font-mono text-[10px] text-slate-500 truncate">({m.filePath})</span>
+                            </div>
+                            <p className="text-[10px] text-slate-500">{m.reason}</p>
+                          </div>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                            m.status === 'READY' ? 'bg-emerald-100 text-emerald-800' :
+                            m.status === 'NOT_FOUND' ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
+                          }`}>
+                            {m.status === 'READY' ? 'Siap Dipindah' : m.status === 'NOT_FOUND' ? '404 Tidak Ada' : 'RLS Terhalang'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Info & Panduan jika 0 berkas terdeteksi */}
+                {migrationStats && migrationStats.totalPending === 0 && (
+                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-3">
+                    <div className="flex items-start gap-2.5">
+                      <Info className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <span className="font-bold text-slate-800 block">Status: 0 berkas terdeteksi di Supabase Storage</span>
+                        <p className="text-slate-600 leading-relaxed">
+                          Jika semua tugas baru sudah otomatis masuk Google Drive dan tidak ada berkas lama, storage Supabase Anda sudah bersih. Namun jika Anda yakin masih ada berkas tugas mahasiswa lama yang belum dipindahkan, hal ini terjadi karena proteksi <strong>Row Level Security (RLS)</strong> Supabase secara default hanya mengizinkan mahasiswa/dosen yang bersangkutan melihat berkasnya.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-3.5 rounded-lg border border-slate-200/80 space-y-2.5">
+                      <span className="font-bold text-slate-800 block text-[11px]">
+                        🛠️ Solusi agar Admin & Server dapat membaca & memindahkan seluruh berkas:
+                      </span>
+                      <div className="space-y-2 text-[11px] text-slate-600">
+                        <p>
+                          <strong>Cara 1 (Paling Cepat):</strong> Tambahkan <code className="bg-slate-100 px-1 py-0.5 rounded font-mono font-bold text-slate-900">SUPABASE_SERVICE_ROLE_KEY</code> ke file <code className="bg-slate-100 px-1 py-0.5 rounded font-mono font-bold">.env</code>. Kunci ini bisa disalin dari <em>Supabase Dashboard → Project Settings → API → service_role secret</em>.
+                        </p>
+                        <p>
+                          <strong>Cara 2 (Jalankan SQL Kebijakan Admin):</strong> Jalankan query berikut di <em>Supabase Dashboard → SQL Editor</em> agar akun Admin bebas mengakses semua tugas:
+                        </p>
+                        <div className="relative">
+                          <pre className="p-2.5 bg-slate-900 text-slate-200 text-[10px] font-mono rounded-lg overflow-x-auto leading-relaxed">
+{`CREATE POLICY "Admins can manage all submissions" ON public.submissions FOR ALL TO authenticated USING (public.get_user_role(auth.uid()) = 'admin') WITH CHECK (public.get_user_role(auth.uid()) = 'admin');
+CREATE POLICY "Admins can manage all course materials" ON public.course_materials FOR ALL TO authenticated USING (public.get_user_role(auth.uid()) = 'admin') WITH CHECK (public.get_user_role(auth.uid()) = 'admin');
+CREATE POLICY "Admins can manage all storage objects" ON storage.objects FOR ALL TO authenticated USING (public.get_user_role(auth.uid()) = 'admin') WITH CHECK (public.get_user_role(auth.uid()) = 'admin');`}
+                          </pre>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(`CREATE POLICY "Admins can manage all submissions" ON public.submissions FOR ALL TO authenticated USING (public.get_user_role(auth.uid()) = 'admin') WITH CHECK (public.get_user_role(auth.uid()) = 'admin');\nCREATE POLICY "Admins can manage all course materials" ON public.course_materials FOR ALL TO authenticated USING (public.get_user_role(auth.uid()) = 'admin') WITH CHECK (public.get_user_role(auth.uid()) = 'admin');\nCREATE POLICY "Admins can manage all storage objects" ON storage.objects FOR ALL TO authenticated USING (public.get_user_role(auth.uid()) = 'admin') WITH CHECK (public.get_user_role(auth.uid()) = 'admin');`);
+                              showBanner('success', 'Perintah SQL berhasil disalin ke clipboard!');
+                            }}
+                            className="absolute top-2 right-2 px-2 py-1 bg-white/20 hover:bg-white/30 text-white text-[10px] rounded font-semibold transition-colors cursor-pointer"
+                          >
+                            Salin SQL
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Migration Result Banner if available */}
+                {migrationResult && (
+                  <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 space-y-1.5 animate-in fade-in">
+                    <div className="flex items-center gap-2 font-bold text-emerald-800">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      Migrasi Berkas Berhasil Diselesaikan!
+                    </div>
+                    <p className="text-emerald-700">
+                      Dipindahkan: <strong>{migrationResult.movedSubmissions} tugas mahasiswa</strong> dan <strong>{migrationResult.movedMaterials} materi dosen</strong> ke Google Drive.
+                    </p>
+                    <p className="text-emerald-700">
+                      Estimasi kuota Supabase Storage yang dibebaskan: <strong>~{migrationResult.mbFreed} MB</strong>.
+                    </p>
+                    {migrationResult.errors && migrationResult.errors.length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-emerald-200/60 text-amber-800 text-[11px]">
+                        <span className="font-bold">Catatan berkas yang dilewati:</span>
+                        <ul className="list-disc list-inside mt-1 space-y-0.5">
+                          {migrationResult.errors.slice(0, 5).map((err, idx) => (
+                            <li key={idx}>{err}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Action button & explanation */}
+                <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="text-xs text-slate-500 space-y-0.5">
+                    <p className="font-semibold text-slate-700">Bagaimana proses migrasi bekerja?</p>
+                    <p>1. Sistem mengunduh berkas lama dari Supabase Storage.</p>
+                    <p>2. Berkas diunggah ke Google Drive (Tugas-Mahasiswa atau Materi-Dosen).</p>
+                    <p>3. Link di database diperbarui & berkas lama dihapus dari Supabase.</p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleMigrateToGDrive}
+                    disabled={isMigratingStorage || isLoadingMigrationStats || !migrationStats || (migrationStats.readyCount ?? migrationStats.totalPending) === 0}
+                    className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-[#14B8A6] hover:bg-[#0D9488] text-white text-xs font-bold rounded-xl shadow-sm shadow-[#14B8A6]/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shrink-0"
+                  >
+                    {isMigratingStorage ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Memindahkan ke GDrive...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CloudDownload className="w-4 h-4" />
+                        <span>
+                          {migrationStats?.readyCount !== undefined && migrationStats.readyCount > 0
+                            ? `Pindahkan Berkas Siap ke GDrive (${migrationStats.readyCount})`
+                            : migrationStats?.notFoundCount !== undefined && migrationStats.notFoundCount > 0
+                            ? `Tidak Ada Berkas Fisik Siap (${migrationStats.notFoundCount} Hilang)`
+                            : `Pindahkan Semua ke GDrive (${migrationStats?.totalPending ?? 0})`}
+                        </span>
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
             </div>

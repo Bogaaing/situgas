@@ -79,6 +79,31 @@ create table if not exists public.submissions (
     constraint unique_student_submission unique(assignment_id, student_id)
 );
 
+-- Course Meetings Table
+create table if not exists public.course_meetings (
+    id uuid default gen_random_uuid() primary key,
+    course_id text not null,
+    meeting_number integer not null,
+    title text not null,
+    description text,
+    is_published boolean default false,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    constraint unique_course_meeting unique(course_id, meeting_number)
+);
+
+-- Course Materials Table (Supports both Google Drive / external links and direct file storage)
+create table if not exists public.course_materials (
+    id uuid default gen_random_uuid() primary key,
+    meeting_id uuid references public.course_meetings(id) on delete cascade not null,
+    title text not null,
+    material_type text check (material_type in ('file', 'link')) not null,
+    file_path text,
+    external_url text,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
 -- ==========================================
 -- 3. INDEXES FOR PERFORMANCE
 -- ==========================================
@@ -90,6 +115,8 @@ create index if not exists idx_enrollments_course on public.enrollments(course_i
 create index if not exists idx_assignments_course on public.assignments(course_id);
 create index if not exists idx_submissions_assignment on public.submissions(assignment_id);
 create index if not exists idx_submissions_student on public.submissions(student_id);
+create index if not exists idx_course_meetings_course on public.course_meetings(course_id);
+create index if not exists idx_course_materials_meeting on public.course_materials(meeting_id);
 
 -- ==========================================
 -- 4. REUSABLE TRIGGERS (UPDATED_AT)
@@ -107,6 +134,8 @@ create trigger tr_courses_updated_at before update on public.courses for each ro
 create trigger tr_enrollments_updated_at before update on public.enrollments for each row execute procedure public.handle_updated_at();
 create trigger tr_assignments_updated_at before update on public.assignments for each row execute procedure public.handle_updated_at();
 create trigger tr_submissions_updated_at before update on public.submissions for each row execute procedure public.handle_updated_at();
+create trigger tr_course_meetings_updated_at before update on public.course_meetings for each row execute procedure public.handle_updated_at();
+create trigger tr_course_materials_updated_at before update on public.course_materials for each row execute procedure public.handle_updated_at();
 
 -- ==========================================
 -- 5. SECURITY HELPER FUNCTIONS
@@ -276,6 +305,8 @@ alter table public.courses enable row level security;
 alter table public.enrollments enable row level security;
 alter table public.assignments enable row level security;
 alter table public.submissions enable row level security;
+alter table public.course_meetings enable row level security;
+alter table public.course_materials enable row level security;
 
 -- PROFILES POLICIES
 create policy "Users can view their own profile"
@@ -365,6 +396,53 @@ create policy "Students can update their own submissions text/link"
   to authenticated
   using (student_id = auth.uid())
   with check (student_id = auth.uid());
+
+create policy "Admins can manage all submissions"
+  on public.submissions for all
+  to authenticated
+  using (public.get_user_role(auth.uid()) = 'admin')
+  with check (public.get_user_role(auth.uid()) = 'admin');
+
+-- COURSE MEETINGS POLICIES
+create policy "Lecturers can manage course meetings"
+  on public.course_meetings for all
+  to authenticated
+  using (public.is_lecturer(auth.uid()))
+  with check (public.is_lecturer(auth.uid()));
+
+create policy "Admins can manage all course meetings"
+  on public.course_meetings for all
+  to authenticated
+  using (public.get_user_role(auth.uid()) = 'admin')
+  with check (public.get_user_role(auth.uid()) = 'admin');
+
+create policy "Students can view published course meetings"
+  on public.course_meetings for select
+  to authenticated
+  using (is_published = true);
+
+-- COURSE MATERIALS POLICIES
+create policy "Lecturers can manage course materials"
+  on public.course_materials for all
+  to authenticated
+  using (public.is_lecturer(auth.uid()))
+  with check (public.is_lecturer(auth.uid()));
+
+create policy "Admins can manage all course materials"
+  on public.course_materials for all
+  to authenticated
+  using (public.get_user_role(auth.uid()) = 'admin')
+  with check (public.get_user_role(auth.uid()) = 'admin');
+
+create policy "Students can view course materials for published meetings"
+  on public.course_materials for select
+  to authenticated
+  using (
+    exists (
+      select 1 from public.course_meetings
+      where public.course_meetings.id = meeting_id and public.course_meetings.is_published = true
+    )
+  );
 
 -- ==========================================
 -- 8. AUTOMATIC PROFILE TRIGGER ON SIGNUP
@@ -493,3 +571,9 @@ create policy "Students and Lecturers can download course materials"
   using (
     bucket_id = 'course-materials'
   );
+
+create policy "Admins can manage all storage objects"
+  on storage.objects for all
+  to authenticated
+  using (public.get_user_role(auth.uid()) = 'admin')
+  with check (public.get_user_role(auth.uid()) = 'admin');

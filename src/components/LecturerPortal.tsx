@@ -18,6 +18,15 @@ import { apiRequest } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import { FunctionsHttpError, FunctionsRelayError, FunctionsFetchError } from '@supabase/supabase-js';
 import { AssignmentDescriptionRenderer, AutoLinkText } from './AutoLinkText';
+import { uploadFileToGDrive } from '../lib/gdrive';
+import {
+  isAllClassesValue,
+  isAssignmentApplicableToClass,
+  isAssignmentBelongingToCourse,
+  isGoogleDriveUrl,
+  normalizeUrl,
+  isValidUrl
+} from '../lib/assignmentHelpers';
 
 interface LecturerPortalProps {
   user: User;
@@ -118,7 +127,7 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
 
   // Material Form Modal State
   const [isAddMaterialOpen, setIsAddMaterialOpen] = useState(false);
-  const [materialFormType, setMaterialFormType] = useState<'file' | 'link'>('file');
+  const [materialFormType, setMaterialFormType] = useState<'file' | 'link'>('link');
   const [materialFormTitle, setMaterialFormTitle] = useState('');
   const [materialFormUrl, setMaterialFormUrl] = useState('');
   const [materialFormFile, setMaterialFormFile] = useState<File | null>(null);
@@ -157,6 +166,7 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
     setIsCoursesLoading(true);
     setCoursesError(null);
     try {
+      // 1. First attempt to load courses specifically assigned to this lecturer
       const { data, error } = await supabase
         .from('courses')
         .select('*')
@@ -164,8 +174,21 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
         .order('code', { ascending: true });
 
       if (error) throw error;
-      setCourses(data || []);
-      await loadAssignments(data || []);
+      
+      let finalCourses = data || [];
+      // 2. If no courses found specifically under lecturer_id, fetch all courses accessible under user permissions
+      if (finalCourses.length === 0) {
+        const { data: allCourses } = await supabase
+          .from('courses')
+          .select('*')
+          .order('code', { ascending: true });
+        if (allCourses && allCourses.length > 0) {
+          finalCourses = allCourses;
+        }
+      }
+
+      setCourses(finalCourses);
+      await loadAssignments(finalCourses);
     } catch (err: any) {
       console.error('Error fetching courses:', err);
       setCoursesError('Gagal memuat data mata kuliah.');
@@ -1008,7 +1031,7 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
         `)
         .eq('course_id', assignment.course_id);
 
-      if (assignment.class_name) {
+      if (assignment.class_name && !isAllClassesValue(assignment.class_name)) {
         query = query.eq('class_name', assignment.class_name);
       }
 
@@ -1018,7 +1041,7 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
         return;
       }
 
-      // 2. Fetch submissions for this assignment
+      // 2. Fetch submissions for this assignment directly from Supabase
       const { data: subsData, error: subsError } = await supabase
         .from('submissions')
         .select('*')
@@ -1029,10 +1052,25 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
         return;
       }
 
-      // 3. Merge target students and submissions
-      const merged = (enrollData || []).map((enroll: any) => {
+      // 3. Include any students who submitted but were not captured in enrollData
+      const enrolledStudentIds = new Set((enrollData || []).map((e: any) => String(e.student_id)));
+      const extraStudentIds = (subsData || [])
+        .map((s: any) => String(s.student_id))
+        .filter((id: string) => id && !enrolledStudentIds.has(id));
+
+      let extraProfiles: any[] = [];
+      if (extraStudentIds.length > 0) {
+        const { data: profData } = await supabase
+          .from('profiles')
+          .select('id, nim, name, avatar_url')
+          .in('id', extraStudentIds);
+        extraProfiles = profData || [];
+      }
+
+      // 4. Merge target students and submissions
+      const baseMerged = (enrollData || []).map((enroll: any) => {
         const student = enroll.student;
-        const sub = (subsData || []).find((s: any) => s.student_id === enroll.student_id);
+        const sub = (subsData || []).find((s: any) => String(s.student_id) === String(enroll.student_id));
         
         return {
           studentId: enroll.student_id,
@@ -1056,6 +1094,34 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
           } : null,
         };
       });
+
+      const extraMerged = extraStudentIds.map((stId: string) => {
+        const student = extraProfiles.find((p: any) => String(p.id) === stId);
+        const sub = (subsData || []).find((s: any) => String(s.student_id) === stId);
+        return {
+          studentId: stId,
+          nim: student?.nim || '-',
+          name: student?.name || 'Mahasiswa Terdaftar',
+          className: assignment.class_name || 'Umum',
+          roomName: '-',
+          submission: sub ? {
+            id: sub.id,
+            assignmentId: sub.assignment_id,
+            student_id: sub.student_id,
+            submitted_at: sub.submitted_at,
+            file_path: sub.file_path,
+            submitted_link: sub.submitted_link,
+            submitted_note: sub.submitted_note,
+            grade: sub.grade,
+            feedback: sub.feedback,
+            graded_at: sub.graded_at,
+            created_at: sub.created_at,
+            updated_at: sub.updated_at
+          } : null,
+        };
+      });
+
+      const merged = [...baseMerged, ...extraMerged];
 
       // Sort: Mahasiswa yang baru mengumpulkan tugas berada di paling atas
       merged.sort((a, b) => {
@@ -1212,9 +1278,12 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
         setAssignments([]);
         return;
       }
-      const courseIds = activeCourses.map(c => c.id);
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const validCourseUuids = activeCourses
+        .map(c => c.id)
+        .filter(id => id && uuidRegex.test(String(id)));
 
-      const { data, error } = await supabase
+      let query = supabase
         .from('assignments')
         .select(`
           id,
@@ -1233,8 +1302,13 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
             name
           )
         `)
-        .in('course_id', courseIds)
         .order('deadline', { ascending: true });
+
+      if (validCourseUuids.length > 0) {
+        query = query.in('course_id', validCourseUuids);
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
       setAssignments(data || []);
@@ -1281,7 +1355,7 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
     }
   }, [formCourse]);
 
-  // Fetch all backend data (excluding assignments)
+  // Fetch all backend data (with Supabase as single source of truth and local API as fallback)
   const loadData = async () => {
     setIsLoading(true);
     try {
@@ -1292,16 +1366,17 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
         apiRequest<any[]>('/api/submissions').catch(() => []),
       ]);
 
-      // Fetch submissions directly from Supabase
+      // Fetch submissions directly from Supabase (Primary)
       const { data: subsData, error: subsError } = await supabase
         .from('submissions')
-        .select('*');
+        .select('*')
+        .order('submitted_at', { ascending: false });
 
       if (subsError) {
         console.error('Error loading submissions from Supabase:', subsError);
       }
 
-      // Merge Supabase submissions and API submissions, deduplicating by ID or composite key
+      // Merge Supabase submissions and API submissions, giving priority to Supabase
       const rawCombined = [...(subsData || []), ...(Array.isArray(apiSubs) ? apiSubs : [])];
       const seenKeys = new Set<string>();
       const formattedSubmissions: any[] = [];
@@ -1327,13 +1402,19 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
             userUid: studId,
             student_id: studId,
             studentId: studId,
-            submittedAt: sub.submitted_at || sub.submittedAt,
-            submittedFile: sub.file_path || sub.submittedFile,
-            submittedLink: sub.submitted_link || sub.submittedLink,
-            submittedNote: sub.submitted_note || sub.submittedNote,
+            submittedAt: sub.submitted_at,
+            submitted_at: sub.submitted_at,
+            file_path: sub.file_path,
+            submittedFile: sub.file_path,
+            submittedLink: sub.submitted_link,
+            submitted_link: sub.submitted_link,
+            submittedNote: sub.submitted_note,
+            submitted_note: sub.submitted_note,
             grade: parsedGrade,
             feedback: sub.feedback || '',
-            graded_at: sub.graded_at || sub.gradedAt,
+            graded_at: sub.graded_at,
+            created_at: sub.created_at,
+            updated_at: sub.updated_at,
           });
         }
       }
@@ -1349,18 +1430,56 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
     }
   };
 
+  const refreshAllData = async () => {
+    await Promise.all([
+      loadCourses(),
+      loadEnrollments(),
+      loadData(),
+    ]);
+  };
+
   useEffect(() => {
-    loadData();
-    loadCourses();
-    loadEnrollments();
+    refreshAllData();
+
+    // Setup Supabase Realtime channel for live updates to submissions, assignments, and enrollments
+    const channel = supabase
+      .channel('lecturer-portal-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'submissions' },
+        () => {
+          loadData();
+          if (selectedAsgSubmissionsId) {
+            loadTargetStudentsForAssignment(selectedAsgSubmissionsId);
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'assignments' },
+        () => {
+          loadCourses();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'enrollments' },
+        () => {
+          loadEnrollments();
+          loadData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   // Reload latest data whenever lecturer navigates to reports tab
   useEffect(() => {
     if (activeTab === 'reports') {
-      loadData();
-      loadCourses();
-      loadEnrollments();
+      refreshAllData();
     }
   }, [activeTab]);
 
@@ -1414,18 +1533,16 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
       if (assignmentClassFilter === 'all') return true;
 
       if (assignmentClassFilter === 'all_classes') {
-        return assignment.class_name === null;
+        return isAllClassesValue(assignment.class_name);
       }
 
       // If assignment was specifically targeted to this class
-      if (assignment.class_name === assignmentClassFilter) return true;
+      if (assignment.class_name && assignment.class_name.trim().toLowerCase() === assignmentClassFilter.trim().toLowerCase()) return true;
 
-      // If assignment was targeted to "Semua Kelas" (null), check if this assignment's course has this class
-      if (assignment.class_name === null) {
+      // If assignment was targeted to "Semua Kelas" / General, check if this assignment's course has this class
+      if (isAllClassesValue(assignment.class_name)) {
         const courseHasClass = mockEnrollments.length === 0 || mockEnrollments.some((e: any) =>
-          (e.courseId === assignment.course_id ||
-           e.courseUuid === assignment.course_id ||
-           (assignment.course && (e.courseId === assignment.course.id || e.courseCode === assignment.course.code))) &&
+          isAssignmentBelongingToCourse(assignment, { id: e.courseUuid, code: e.courseId }) &&
           e.className?.trim().toLowerCase() === assignmentClassFilter.trim().toLowerCase()
         );
         return courseHasClass;
@@ -1435,38 +1552,65 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
     });
   }, [assignments, assignmentSearch, assignmentClassFilter, mockEnrollments]);
 
-  // Combined statistics for Dashboard cards
+  // Combined statistics for Dashboard cards (Single Source of Truth & Deduplicated)
   const stats = useMemo(() => {
-    const lecturerCourseIds = new Set(courses.map(c => c.id));
-    const lecturerEnrollments = mockEnrollments.filter(e => lecturerCourseIds.has(e.courseUuid));
+    const lecturerCourseIds = new Set(courses.map(c => String(c.id).toLowerCase().trim()));
+    const lecturerCourseCodes = new Set(courses.map(c => String(c.code).toLowerCase().trim()));
+    const matchedEnrollments = mockEnrollments.filter(e => {
+      const uuid = String(e.courseUuid || e.course?.id || '').toLowerCase().trim();
+      const code = String(e.courseId || e.course?.code || '').toLowerCase().trim();
+      return lecturerCourseIds.has(uuid) || lecturerCourseCodes.has(code);
+    });
+    const lecturerEnrollments = matchedEnrollments.length > 0 ? matchedEnrollments : mockEnrollments;
     const uniqueStudentIds = new Set(lecturerEnrollments.map(e => e.studentId));
     // Fallback to students.length if mockEnrollments is empty or has no match
     const totalStudentsCount = uniqueStudentIds.size > 0 ? uniqueStudentIds.size : students.length;
 
     // Filter submissions to only those belonging to the lecturer's assignments
-    const lecturerAssignmentIds = new Set(assignments.map(a => String(a.id)));
-    const lecturerSubmissions = submissions.filter(s => lecturerAssignmentIds.has(String(s.assignmentId)));
+    const lecturerAssignmentIds = new Set(assignments.map(a => String(a.id).toLowerCase().trim()));
+
+    // Deduplicate submissions per (assignment_id, student_id)
+    const uniqueSubmissionsMap = new Map<string, any>();
+    submissions.forEach(s => {
+      const asgId = String(s.assignment_id || s.assignmentId || '').toLowerCase().trim();
+      const studId = String(s.student_id || s.userUid || s.studentId || '').toLowerCase().trim();
+      if ((lecturerAssignmentIds.size === 0 || lecturerAssignmentIds.has(asgId)) && studId) {
+        const key = `${asgId}__${studId}`;
+        if (!uniqueSubmissionsMap.has(key)) {
+          uniqueSubmissionsMap.set(key, s);
+        }
+      }
+    });
+
+    const uniqueLecturerSubmissions = Array.from(uniqueSubmissionsMap.values());
 
     return {
       totalStudents: totalStudentsCount,
       totalAssignments: assignments.length,
-      totalSubmissions: lecturerSubmissions.length,
-      gradedSubmissions: lecturerSubmissions.filter(s => s.grade !== null).length,
+      totalSubmissions: uniqueLecturerSubmissions.length,
+      gradedSubmissions: uniqueLecturerSubmissions.filter(s => s.grade !== null && s.grade !== undefined && s.grade !== '' && !isNaN(Number(s.grade))).length,
     };
   }, [courses, mockEnrollments, students, assignments, submissions]);
 
   // Trend Chart Data (aggregated submissions by course)
   const chartData = useMemo(() => {
     return courses.map(course => {
-      const courseAssignments = assignments.filter(a => a.course_id === course.id);
-      const courseAssignmentIds = courseAssignments.map(a => a.id);
-      const courseSubmissionsCount = submissions.filter(s => 
-        courseAssignmentIds.some(asgId => String(asgId) === String(s.assignmentId))
-      ).length;
+      const courseAssignments = assignments.filter(a => isAssignmentBelongingToCourse(a, course));
+      const courseAssignmentIds = new Set(courseAssignments.map(a => String(a.id).toLowerCase().trim()));
+      
+      const uniqueSubmissions = new Set<string>();
+      submissions.forEach(s => {
+        const asgId = String(s.assignment_id || s.assignmentId || '').toLowerCase().trim();
+        const studId = String(s.student_id || s.userUid || s.studentId || '').toLowerCase().trim();
+        if (courseAssignmentIds.has(asgId) && studId) {
+          uniqueSubmissions.add(`${asgId}__${studId}`);
+        }
+      });
+
       return {
         name: course.code,
         Tugas: courseAssignments.length,
-        Kumpulan: courseSubmissionsCount,
+        Kumpulan: uniqueSubmissions.size,
       };
     });
   }, [courses, assignments, submissions]);
@@ -1525,10 +1669,22 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
   // Activity summary per course for Dashboard table
   const coursesActivityList = useMemo(() => {
     return courses.map(course => {
-      const courseAssignments = assignments.filter(a => a.course_id === course.id || a.course?.id === course.id || a.course?.code === course.code);
-      const assignmentIds = new Set(courseAssignments.map(a => String(a.id)));
-      const courseSubmissions = submissions.filter(s => assignmentIds.has(String(s.assignmentId)));
-      const pendingCount = courseSubmissions.filter(s => s.grade === null).length;
+      const courseAssignments = assignments.filter(a => isAssignmentBelongingToCourse(a, course));
+      const assignmentIds = new Set(courseAssignments.map(a => String(a.id).toLowerCase().trim()));
+      
+      const uniqueSubmissionsMap = new Map<string, any>();
+      submissions.forEach(s => {
+        const asgId = String(s.assignment_id || s.assignmentId || '').toLowerCase().trim();
+        const studId = String(s.student_id || s.userUid || s.studentId || '').toLowerCase().trim();
+        if (assignmentIds.has(asgId) && studId) {
+          const key = `${asgId}__${studId}`;
+          if (!uniqueSubmissionsMap.has(key)) {
+            uniqueSubmissionsMap.set(key, s);
+          }
+        }
+      });
+      const courseSubmissions = Array.from(uniqueSubmissionsMap.values());
+      const pendingCount = courseSubmissions.filter(s => s.grade === null || s.grade === undefined || s.grade === '' || isNaN(Number(s.grade))).length;
       const totalSubmissionsCount = courseSubmissions.length;
       const activeAssignmentsCount = courseAssignments.length;
 
@@ -1614,7 +1770,18 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
 
   // Student task reports calculation per enrollment (student x course x class)
   const studentTaskReports = useMemo(() => {
-    return mockEnrollments.map((env) => {
+    const lecturerCourseIds = new Set(courses.map(c => String(c.id).toLowerCase().trim()));
+    const lecturerCourseCodes = new Set(courses.map(c => String(c.code).toLowerCase().trim()));
+
+    // Filter enrollments to courses taught by this lecturer (or fallback to all if not matched)
+    const matchedEnrollments = mockEnrollments.filter(e => {
+      const uuid = String(e.courseUuid || e.course?.id || '').toLowerCase().trim();
+      const code = String(e.courseId || e.course?.code || '').toLowerCase().trim();
+      return lecturerCourseIds.has(uuid) || lecturerCourseCodes.has(code);
+    });
+    const relevantEnrollments = matchedEnrollments.length > 0 ? matchedEnrollments : mockEnrollments;
+
+    return relevantEnrollments.map((env) => {
       // 1. Resolve student info
       const studentObj = (env as any).student ||
         mockStudents.find(s => String(s.id).trim() === String(env.studentId).trim()) ||
@@ -1636,29 +1803,9 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
       const courseUuid = env.courseUuid || courseObj?.id;
 
       // 3. Find all assignments belonging to this course
-      const courseAssignments = assignments.filter(a => {
-        const matchUuid = courseUuid && String(a.course_id).trim() === String(courseUuid).trim();
-        const matchCode = courseCode && (
-          String(a.course_id).trim().toLowerCase() === String(courseCode).trim().toLowerCase() ||
-          (a.course?.code && String(a.course.code).trim().toLowerCase() === String(courseCode).trim().toLowerCase())
-        );
-        const matchNestedId = a.course?.id && courseUuid && String(a.course.id).trim() === String(courseUuid).trim();
-        return Boolean(matchUuid || matchCode || matchNestedId);
-      });
+      const courseAssignments = assignments.filter(a => isAssignmentBelongingToCourse(a, { id: courseUuid, code: courseCode }));
 
-      // Filter to relevant assignments for this student's class (or general / all classes)
-      const relevantAssignments = courseAssignments.filter(a => {
-        if (!a.class_name || a.class_name.trim() === '') return true;
-        const normAsgClass = a.class_name.trim().toLowerCase();
-        if (normAsgClass === 'all' || normAsgClass === 'semua kelas') return true;
-        const normStudentClass = (env.className || '').trim().toLowerCase();
-        return normAsgClass === normStudentClass;
-      });
-
-      const relevantAssignmentIds = new Set(relevantAssignments.map(a => String(a.id).toLowerCase().trim()));
-      const courseAssignmentIds = new Set(courseAssignments.map(a => String(a.id).toLowerCase().trim()));
-
-      // 4. Match student's submissions for this course & class
+      // 4. Gather all valid identifiers for this student
       const validStudentIds = new Set([
         String(env.studentId || '').toLowerCase().trim(),
         String((env as any).student?.id || '').toLowerCase().trim(),
@@ -1666,36 +1813,84 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
         String(studentObj?.uid || '').toLowerCase().trim(),
       ].filter(Boolean));
 
-      const studentSubmissions = submissions.filter(s => {
+      // Collect student's submissions for assignments in this course, deduplicating by assignment_id
+      const studentSubmissionsMap = new Map<string, any>();
+      submissions.forEach(s => {
         const subStudentId = String(s.userUid || s.student_id || s.studentId || '').toLowerCase().trim();
-        if (!validStudentIds.has(subStudentId)) return false;
+        if (!validStudentIds.has(subStudentId)) return;
 
-        const asgId = String(s.assignmentId || s.assignment_id || '').toLowerCase().trim();
-        if (relevantAssignmentIds.has(asgId) || courseAssignmentIds.has(asgId)) {
+        const asgId = String(s.assignment_id || s.assignmentId || '').toLowerCase().trim();
+        const asgBelongs = courseAssignments.some(a => String(a.id).toLowerCase().trim() === asgId);
+        if (asgBelongs) {
+          if (!studentSubmissionsMap.has(asgId)) {
+            studentSubmissionsMap.set(asgId, s);
+          } else {
+            const existing = studentSubmissionsMap.get(asgId);
+            const hasExistingGrade = existing.grade !== null && existing.grade !== undefined && existing.grade !== '';
+            const hasNewGrade = s.grade !== null && s.grade !== undefined && s.grade !== '';
+            if (hasNewGrade && !hasExistingGrade) {
+              studentSubmissionsMap.set(asgId, s);
+            } else if (!hasExistingGrade && new Date(s.submittedAt || s.submitted_at || 0) > new Date(existing.submittedAt || existing.submitted_at || 0)) {
+              studentSubmissionsMap.set(asgId, s);
+            }
+          }
+        }
+      });
+
+      // 5. Filter applicable assignments for this student's class
+      const applicableAssignments = courseAssignments.filter(a => {
+        const asgId = String(a.id).toLowerCase().trim();
+        const isSubmitted = studentSubmissionsMap.has(asgId);
+
+        // Draft assignments do not count unless student has already submitted
+        if (a.status === 'draft' && !isSubmitted) {
+          return false;
+        }
+
+        // If the student already submitted, it is guaranteed to be applicable
+        if (isSubmitted) {
           return true;
         }
 
-        // Check if the assignment in assignments array belongs to this course
-        const asgObj = assignments.find(a => String(a.id).toLowerCase().trim() === asgId);
-        if (asgObj) {
-          const matchCourseUuid = courseUuid && String(asgObj.course_id).toLowerCase().trim() === String(courseUuid).toLowerCase().trim();
-          const matchCourseCode = courseCode && (
-            String(asgObj.course_id).toLowerCase().trim() === String(courseCode).toLowerCase().trim() ||
-            (asgObj.course?.code && String(asgObj.course.code).toLowerCase().trim() === String(courseCode).toLowerCase().trim())
-          );
-          return Boolean(matchCourseUuid || matchCourseCode);
-        }
-
-        // Default to true if submission is from this student
-        return true;
+        // Otherwise check class applicability
+        return isAssignmentApplicableToClass(a.class_name, env.className);
       });
 
-      const totalAssignments = Math.max(relevantAssignments.length, studentSubmissions.length);
-      const totalSubmitted = studentSubmissions.length;
-      const gradedSubmissions = studentSubmissions.filter(s => s.grade !== null && s.grade !== undefined && s.grade !== '' && !isNaN(Number(s.grade)));
-      const totalGraded = gradedSubmissions.length;
+      const applicableAssignmentIds = new Set(applicableAssignments.map(a => String(a.id).toLowerCase().trim()));
+
+      // Count unique submitted assignments that are applicable
+      const submittedAssignmentsList = Array.from(studentSubmissionsMap.entries())
+        .filter(([asgId]) => applicableAssignmentIds.has(asgId))
+        .map(([_, sub]) => sub);
+
+      const totalAssignments = applicableAssignments.length;
+      const totalSubmitted = submittedAssignmentsList.length;
       const unsubmitted = Math.max(0, totalAssignments - totalSubmitted);
+
+      const gradedSubmissions = submittedAssignmentsList.filter(s => 
+        s.grade !== null && s.grade !== undefined && s.grade !== '' && !isNaN(Number(s.grade))
+      );
+      const totalGraded = gradedSubmissions.length;
       const ungraded = Math.max(0, totalSubmitted - totalGraded);
+
+      // Late vs on-time calculation
+      let lateCount = 0;
+      let onTimeCount = 0;
+      submittedAssignmentsList.forEach(sub => {
+        const asgId = String(sub.assignment_id || sub.assignmentId || '').toLowerCase().trim();
+        const asg = applicableAssignments.find(a => String(a.id).toLowerCase().trim() === asgId);
+        if (asg && asg.deadline) {
+          const subDate = new Date(sub.submitted_at || sub.submittedAt || 0);
+          const deadlineDate = new Date(asg.deadline);
+          if (subDate.getTime() > deadlineDate.getTime()) {
+            lateCount++;
+          } else {
+            onTimeCount++;
+          }
+        } else {
+          onTimeCount++;
+        }
+      });
 
       const totalScore = gradedSubmissions.reduce((acc, curr) => acc + Number(curr.grade || 0), 0);
       const averageGrade = totalGraded > 0 ? Math.round((totalScore / totalGraded) * 10) / 10 : null;
@@ -1730,6 +1925,8 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
         totalGraded,
         unsubmitted,
         ungraded,
+        lateCount,
+        onTimeCount,
         averageGrade,
         completionRate,
         status,
@@ -1796,6 +1993,8 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
       'Ruangan': item.roomName,
       'Total Target Tugas': item.totalAssignments,
       'Tugas Dikumpulkan': item.totalSubmitted,
+      'Tepat Waktu': item.onTimeCount,
+      'Terlambat': item.lateCount,
       'Tugas Dinilai': item.totalGraded,
       'Tugas Belum Kumpul': item.unsubmitted,
       'Belum Dinilai': item.ungraded,
@@ -2141,24 +2340,21 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
 
     try {
       if (materialFormType === 'link') {
-        const urlTrimmed = materialFormUrl.trim();
-        if (!urlTrimmed) {
-          setMaterialFormError('URL materi wajib diisi.');
+        const rawUrl = materialFormUrl.trim();
+        if (!rawUrl) {
+          setMaterialFormError('URL atau Link Google Drive materi wajib diisi.');
           setIsMaterialSubmitting(false);
           return;
         }
 
-        // Validate URL starting with http/https
-        try {
-          const parsedUrl = new URL(urlTrimmed);
-          if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
-            throw new Error();
-          }
-        } catch {
-          setMaterialFormError('URL materi tidak valid (harus diawali http:// atau https://).');
+        // Validate URL starting with http/https or auto-normalizable
+        if (!isValidUrl(rawUrl)) {
+          setMaterialFormError('URL materi tidak valid. Masukkan link website atau tautan Google Drive yang benar (contoh: https://drive.google.com/file/d/...).');
           setIsMaterialSubmitting(false);
           return;
         }
+
+        const normalizedLink = normalizeUrl(rawUrl);
 
         const { error } = await supabase
           .from('course_materials')
@@ -2167,7 +2363,7 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
             title: trimmedTitle,
             material_type: 'link',
             file_path: null,
-            external_url: urlTrimmed,
+            external_url: normalizedLink,
           });
 
         if (error) throw error;
@@ -2198,55 +2394,80 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
           return;
         }
 
-        // Safe filename: remove path traversal, replace / and \
-        const safeFileName = materialFormFile.name.replace(/[\/\\]/g, '_');
-        const uniqueFileName = `${Date.now()}-${Math.random().toString(36).substring(2, 11)}-${safeFileName}`;
-        const storagePath = `${selectedMaterialCourseId}/${selectedMeetingForMaterials.id}/${uniqueFileName}`;
-
-        // Ensure private bucket exists: course-materials
+        // 1. Coba simpan berkas langsung ke Google Drive folder materi
+        let uploadedToGDrive = false;
         try {
-          await supabase.storage.createBucket('course-materials', { public: false });
-        } catch (bucketErr) {
-          console.log('Bucket check/creation non-fatal:', bucketErr);
-        }
+          const gdriveRes = await uploadFileToGDrive(materialFormFile, 'material');
+          if (gdriveRes && gdriveRes.fileUrl) {
+            const { error: dbError } = await supabase
+              .from('course_materials')
+              .insert({
+                meeting_id: selectedMeetingForMaterials.id,
+                title: trimmedTitle,
+                material_type: 'link',
+                file_path: gdriveRes.fileUrl,
+                external_url: gdriveRes.fileUrl,
+              });
 
-        // Upload to private bucket: course-materials
-        const { error: uploadError } = await supabase.storage
-          .from('course-materials')
-          .upload(storagePath, materialFormFile);
-
-        if (uploadError) {
-          console.error('Storage upload error:', uploadError);
-          const detailedMsg = uploadError.message || JSON.stringify(uploadError);
-          setMaterialFormError(`Gagal mengunggah file materi: ${detailedMsg}. Pastikan bucket dan policy 'course-materials' sudah dikonfigurasi di Supabase.`);
-          setIsMaterialSubmitting(false);
-          return;
-        }
-
-        // Insert database row
-        const { error: dbError } = await supabase
-          .from('course_materials')
-          .insert({
-            meeting_id: selectedMeetingForMaterials.id,
-            title: trimmedTitle,
-            material_type: 'file',
-            file_path: storagePath,
-            external_url: null,
-          });
-
-        if (dbError) {
-          console.error('Database insert error, rolling back storage upload:', dbError);
-          // Rollback storage upload (best-effort)
-          try {
-            await supabase.storage
-              .from('course-materials')
-              .remove([storagePath]);
-          } catch (cleanupErr) {
-            console.error('Failed to cleanup orphan file in rollback:', cleanupErr);
+            if (dbError) throw dbError;
+            uploadedToGDrive = true;
           }
-          setMaterialFormError('Gagal menyimpan data materi.');
-          setIsMaterialSubmitting(false);
-          return;
+        } catch (gdriveErr: any) {
+          console.log('Google Drive direct upload not configured or failed, attempting Supabase Storage fallback:', gdriveErr);
+        }
+
+        // 2. Fallback ke Supabase Storage jika Google Drive uploader belum disetel
+        if (!uploadedToGDrive) {
+          // Safe filename: remove path traversal, replace / and \
+          const safeFileName = materialFormFile.name.replace(/[\/\\]/g, '_');
+          const uniqueFileName = `${Date.now()}-${Math.random().toString(36).substring(2, 11)}-${safeFileName}`;
+          const storagePath = `${selectedMaterialCourseId}/${selectedMeetingForMaterials.id}/${uniqueFileName}`;
+
+          // Ensure private bucket exists: course-materials
+          try {
+            await supabase.storage.createBucket('course-materials', { public: false });
+          } catch (bucketErr) {
+            console.log('Bucket check/creation non-fatal:', bucketErr);
+          }
+
+          // Upload to private bucket: course-materials
+          const { error: uploadError } = await supabase.storage
+            .from('course-materials')
+            .upload(storagePath, materialFormFile);
+
+          if (uploadError) {
+            console.error('Storage upload error:', uploadError);
+            const detailedMsg = uploadError.message || JSON.stringify(uploadError);
+            setMaterialFormError(`Gagal mengunggah file materi: ${detailedMsg}. Disarankan menggunakan opsi 'Link Google Drive / URL' di atas untuk membagikan file materi berukuran besar secara mudah dan andal.`);
+            setIsMaterialSubmitting(false);
+            return;
+          }
+
+          // Insert database row
+          const { error: dbError } = await supabase
+            .from('course_materials')
+            .insert({
+              meeting_id: selectedMeetingForMaterials.id,
+              title: trimmedTitle,
+              material_type: 'file',
+              file_path: storagePath,
+              external_url: null,
+            });
+
+          if (dbError) {
+            console.error('Database insert error, rolling back storage upload:', dbError);
+            // Rollback storage upload (best-effort)
+            try {
+              await supabase.storage
+                .from('course-materials')
+                .remove([storagePath]);
+            } catch (cleanupErr) {
+              console.error('Failed to cleanup orphan file in rollback:', cleanupErr);
+            }
+            setMaterialFormError('Gagal menyimpan data materi.');
+            setIsMaterialSubmitting(false);
+            return;
+          }
         }
       }
 
@@ -2321,6 +2542,14 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
   };
 
   const handleDownloadMaterialFile = async (filePath: string, title: string) => {
+    if (!filePath) return;
+
+    // If the path is a Google Drive link or external URL, open it directly in a new tab
+    if (isValidUrl(filePath) || isGoogleDriveUrl(filePath) || /^https?:\/\//i.test(filePath)) {
+      window.open(normalizeUrl(filePath), '_blank', 'noopener,noreferrer');
+      return;
+    }
+
     try {
       const { data, error } = await supabase.storage
         .from('course-materials')
@@ -2346,6 +2575,14 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
   };
 
   const handleDownloadStudentSubmission = async (filePath: string, studentName?: string) => {
+    if (!filePath) return;
+
+    // If the path is a Google Drive link or external URL, open it directly in a new tab
+    if (isValidUrl(filePath) || isGoogleDriveUrl(filePath) || /^https?:\/\//i.test(filePath)) {
+      window.open(normalizeUrl(filePath), '_blank', 'noopener,noreferrer');
+      return;
+    }
+
     try {
       const { data, error } = await supabase.storage
         .from('assignment-submissions')
@@ -3902,30 +4139,44 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                                 {/* Link Submission */}
                                 {selectedSubmissionForDetail.submission.submitted_link && (
                                   <div className="space-y-1.5">
-                                    <span className="text-[10px] text-on-surface-variant block font-bold uppercase">Link Submission</span>
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[10px] text-on-surface-variant block font-bold uppercase">Link / Tautan Tugas</span>
+                                      {isGoogleDriveUrl(selectedSubmissionForDetail.submission.submitted_link) && (
+                                        <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-200">
+                                          Google Drive
+                                        </span>
+                                      )}
+                                    </div>
                                     {(() => {
                                       const link = selectedSubmissionForDetail.submission.submitted_link;
-                                      const isSecure = link.startsWith('http://') || link.startsWith('https://');
-                                      if (isSecure) {
+                                      const isDrive = isGoogleDriveUrl(link);
+                                      const valid = isValidUrl(link);
+                                      const normalized = normalizeUrl(link);
+                                      if (valid) {
                                         return (
                                           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                                            <span className="text-xs font-semibold text-primary truncate bg-slate-50 border border-outline-variant/20 p-2.5 rounded-xl flex-1 block">
+                                            <span className="text-xs font-semibold text-primary truncate bg-slate-50 border border-outline-variant/20 p-2.5 rounded-xl flex-1 block font-mono">
                                               {link}
                                             </span>
                                             <a
-                                              href={link}
+                                              href={normalized}
                                               target="_blank"
                                               rel="noopener noreferrer"
-                                              className="shrink-0 px-4 py-2.5 bg-primary text-white text-xs font-bold rounded-xl hover:opacity-95 transition-all inline-flex items-center gap-1 cursor-pointer justify-center"
+                                              className={`shrink-0 px-4 py-2.5 text-xs font-bold rounded-xl transition-all inline-flex items-center gap-1.5 cursor-pointer justify-center shadow-xs ${
+                                                isDrive
+                                                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                                  : 'bg-primary text-white hover:opacity-95'
+                                              }`}
                                             >
-                                              Buka Link
+                                              <ExternalLink className="w-3.5 h-3.5" />
+                                              <span>{isDrive ? 'Buka di Google Drive' : 'Buka Link'}</span>
                                             </a>
                                           </div>
                                         );
                                       } else {
                                         return (
                                           <span className="text-xs font-semibold text-primary truncate bg-slate-50 border border-outline-variant/20 p-2.5 rounded-xl block">
-                                            {link} <span className="text-[10px] text-amber-600 ml-2 font-bold">(Insecure Protocol - Tidak Dapat Diklik)</span>
+                                            {link} <span className="text-[10px] text-amber-600 ml-2 font-bold">(Format tautan tidak valid)</span>
                                           </span>
                                         );
                                       }
@@ -3946,7 +4197,14 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                                 {/* File Submission */}
                                 {selectedSubmissionForDetail.submission.file_path && (
                                   <div className="space-y-1.5">
-                                    <span className="text-[10px] text-on-surface-variant block font-bold uppercase">Berkas Tugas Mahasiswa</span>
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[10px] text-on-surface-variant block font-bold uppercase">Berkas Tugas Mahasiswa</span>
+                                      {isGoogleDriveUrl(selectedSubmissionForDetail.submission.file_path) && (
+                                        <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-200">
+                                          Google Drive
+                                        </span>
+                                      )}
+                                    </div>
                                     <div className="bg-slate-50 border border-outline-variant/20 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                                       <div className="flex items-center gap-3 min-w-0">
                                         <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center text-red-500 shrink-0">
@@ -3957,16 +4215,28 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                                             {selectedSubmissionForDetail.submission.file_path.split('/').pop()?.replace(/^\d+-/, '') || selectedSubmissionForDetail.submission.file_path}
                                           </p>
                                           <p className="text-[10px] text-emerald-600 font-semibold mt-0.5">
-                                            Tersimpan di Cloud Storage
+                                            {isGoogleDriveUrl(selectedSubmissionForDetail.submission.file_path) ? 'Tersimpan di Google Drive' : 'Tersimpan di Cloud Storage'}
                                           </p>
                                         </div>
                                       </div>
                                       <button
                                         type="button"
                                         onClick={() => handleDownloadStudentSubmission(selectedSubmissionForDetail.submission.file_path, selectedSubmissionForDetail.name)}
-                                        className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:opacity-95 transition-all inline-flex items-center gap-1.5 cursor-pointer shrink-0 justify-center shadow-2xs"
+                                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all inline-flex items-center gap-1.5 cursor-pointer shrink-0 justify-center shadow-2xs ${
+                                          isGoogleDriveUrl(selectedSubmissionForDetail.submission.file_path)
+                                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                            : 'bg-primary text-white hover:opacity-95'
+                                        }`}
                                       >
-                                        <Download className="w-3.5 h-3.5" /> Unduh Berkas
+                                        {isGoogleDriveUrl(selectedSubmissionForDetail.submission.file_path) ? (
+                                          <>
+                                            <ExternalLink className="w-3.5 h-3.5" /> Buka di Google Drive
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Download className="w-3.5 h-3.5" /> Unduh Berkas
+                                          </>
+                                        )}
                                       </button>
                                     </div>
                                   </div>
@@ -4538,63 +4808,75 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                         </div>
                       ) : (
                         <div className="space-y-3">
-                          {meetingMaterials.map(mat => (
-                            <div key={mat.id} className="p-3.5 bg-slate-50 border border-outline-variant/20 rounded-xl flex items-center justify-between gap-4">
-                              <div className="flex items-center gap-3 min-w-0">
-                                {mat.material_type === 'file' ? (
-                                  (() => {
-                                    const ext = mat.file_path?.split('.').pop()?.toLowerCase();
-                                    if (['ppt', 'pptx'].includes(ext || '')) return <span className="p-2 bg-orange-100 text-orange-700 rounded-lg text-xs font-bold uppercase font-mono">PPT</span>;
-                                    if (['xls', 'xlsx', 'csv'].includes(ext || '')) return <span className="p-2 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-bold uppercase font-mono">XLS</span>;
-                                    if (['doc', 'docx'].includes(ext || '')) return <span className="p-2 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold uppercase font-mono">DOC</span>;
-                                    if (ext === 'pdf') return <span className="p-2 bg-red-100 text-red-700 rounded-lg text-xs font-bold uppercase font-mono">PDF</span>;
-                                    if (ext === 'zip') return <span className="p-2 bg-purple-100 text-purple-700 rounded-lg text-xs font-bold uppercase font-mono">ZIP</span>;
-                                    return <span className="p-2 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold uppercase font-mono">FILE</span>;
-                                  })()
-                                ) : (
-                                  <span className="p-2 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold uppercase font-mono">LINK</span>
-                                )}
-                                <div className="min-w-0">
-                                  <h4 className="text-xs font-bold text-primary truncate">{mat.title}</h4>
-                                  <p className="text-[10px] text-on-surface-variant font-semibold mt-0.5">
-                                    {mat.material_type === 'file' ? 'Berkas Unggahan' : 'Tautan Eksternal'}
-                                  </p>
+                          {meetingMaterials.map(mat => {
+                            const isDrive = mat.material_type === 'link'
+                              ? isGoogleDriveUrl(mat.external_url)
+                              : isGoogleDriveUrl(mat.file_path);
+
+                            return (
+                              <div key={mat.id} className="p-3.5 bg-slate-50 border border-outline-variant/20 rounded-xl flex items-center justify-between gap-4">
+                                <div className="flex items-center gap-3 min-w-0">
+                                  {isDrive ? (
+                                    <span className="p-2 bg-emerald-100 text-emerald-800 rounded-lg text-xs font-bold uppercase font-mono">GDRIVE</span>
+                                  ) : mat.material_type === 'file' ? (
+                                    (() => {
+                                      const ext = mat.file_path?.split('.').pop()?.toLowerCase();
+                                      if (['ppt', 'pptx'].includes(ext || '')) return <span className="p-2 bg-orange-100 text-orange-700 rounded-lg text-xs font-bold uppercase font-mono">PPT</span>;
+                                      if (['xls', 'xlsx', 'csv'].includes(ext || '')) return <span className="p-2 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-bold uppercase font-mono">XLS</span>;
+                                      if (['doc', 'docx'].includes(ext || '')) return <span className="p-2 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold uppercase font-mono">DOC</span>;
+                                      if (ext === 'pdf') return <span className="p-2 bg-red-100 text-red-700 rounded-lg text-xs font-bold uppercase font-mono">PDF</span>;
+                                      if (ext === 'zip') return <span className="p-2 bg-purple-100 text-purple-700 rounded-lg text-xs font-bold uppercase font-mono">ZIP</span>;
+                                      return <span className="p-2 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold uppercase font-mono">FILE</span>;
+                                    })()
+                                  ) : (
+                                    <span className="p-2 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold uppercase font-mono">LINK</span>
+                                  )}
+                                  <div className="min-w-0">
+                                    <h4 className="text-xs font-bold text-primary truncate">{mat.title}</h4>
+                                    <p className="text-[10px] text-on-surface-variant font-semibold mt-0.5 truncate max-w-[200px] sm:max-w-md">
+                                      {isDrive
+                                        ? 'Tautan Google Drive'
+                                        : mat.material_type === 'file'
+                                          ? 'Berkas Unggahan'
+                                          : (mat.external_url || 'Tautan Eksternal')}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="flex gap-1.5 shrink-0">
+                                  {mat.material_type === 'file' ? (
+                                    <button
+                                      onClick={() => handleDownloadMaterialFile(mat.file_path, mat.title)}
+                                      className="p-1.5 hover:bg-slate-200 border border-outline-variant/30 rounded-lg text-primary transition-colors cursor-pointer"
+                                      title={isDrive ? "Buka di Google Drive" : "Unduh Berkas"}
+                                    >
+                                      {isDrive ? <ExternalLink className="w-3.5 h-3.5" /> : <Download className="w-3.5 h-3.5" />}
+                                    </button>
+                                  ) : (
+                                    <a
+                                      href={normalizeUrl(mat.external_url)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="p-1.5 hover:bg-slate-200 border border-outline-variant/30 rounded-lg text-primary transition-colors cursor-pointer inline-flex items-center"
+                                      title={isDrive ? "Buka di Google Drive" : "Buka Tautan"}
+                                    >
+                                      <ExternalLink className="w-3.5 h-3.5" />
+                                    </a>
+                                  )}
+                                  <button
+                                    onClick={() => {
+                                      setSelectedMaterialToDelete(mat);
+                                      setMaterialDeleteError(null);
+                                    }}
+                                    className="p-1.5 hover:bg-red-50 text-red-500 border border-red-100 rounded-lg transition-colors cursor-pointer"
+                                    title="Hapus Materi"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
                                 </div>
                               </div>
-
-                              <div className="flex gap-1.5 shrink-0">
-                                {mat.material_type === 'file' ? (
-                                  <button
-                                    onClick={() => handleDownloadMaterialFile(mat.file_path, mat.title)}
-                                    className="p-1.5 hover:bg-slate-200 border border-outline-variant/30 rounded-lg text-primary transition-colors cursor-pointer"
-                                    title="Unduh Berkas"
-                                  >
-                                    <Download className="w-3.5 h-3.5" />
-                                  </button>
-                                ) : (
-                                  <a
-                                    href={mat.external_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="p-1.5 hover:bg-slate-200 border border-outline-variant/30 rounded-lg text-primary transition-colors cursor-pointer inline-flex items-center"
-                                    title="Buka Tautan"
-                                  >
-                                    <ExternalLink className="w-3.5 h-3.5" />
-                                  </a>
-                                )}
-                                <button
-                                  onClick={() => {
-                                    setSelectedMaterialToDelete(mat);
-                                    setMaterialDeleteError(null);
-                                  }}
-                                  className="p-1.5 hover:bg-red-50 text-red-500 border border-red-100 rounded-lg transition-colors cursor-pointer"
-                                  title="Hapus Materi"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                     </div>
@@ -4603,7 +4885,7 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                   {/* Right Column: Add material form */}
                   <div className="bg-white p-6 rounded-2xl border border-outline-variant/30 auth-card-shadow space-y-4">
                     <h3 className="text-xs font-bold text-primary uppercase tracking-wider border-b border-outline-variant/10 pb-3">Tambah Materi Baru</h3>
-                    
+
                     <form onSubmit={handleMaterialSubmit} className="space-y-4">
                       {materialFormError && (
                         <div className="p-2.5 bg-red-50 text-red-600 rounded-xl text-[10px] font-bold border border-red-100 font-sans">
@@ -4612,7 +4894,7 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                       )}
 
                       <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-primary block">Tipe Materi</label>
+                        <label className="text-xs font-bold text-primary block">Metode Materi</label>
                         <div className="grid grid-cols-2 gap-2">
                           <button
                             type="button"
@@ -4620,13 +4902,14 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                               setMaterialFormType('file');
                               setMaterialFormError(null);
                             }}
-                            className={`py-2 text-xs font-bold rounded-xl border text-center transition-all cursor-pointer ${
+                            className={`py-2 text-xs font-bold rounded-xl border text-center transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                               materialFormType === 'file'
                                 ? 'bg-primary border-primary text-white shadow-sm'
                                 : 'bg-white border-outline-variant text-on-surface-variant hover:bg-slate-50'
                             }`}
                           >
-                            Upload File
+                            <Upload className="w-3.5 h-3.5" />
+                            <span>Unggah File (Ke GDrive)</span>
                           </button>
                           <button
                             type="button"
@@ -4634,13 +4917,14 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                               setMaterialFormType('link');
                               setMaterialFormError(null);
                             }}
-                            className={`py-2 text-xs font-bold rounded-xl border text-center transition-all cursor-pointer ${
+                            className={`py-2 text-xs font-bold rounded-xl border text-center transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                               materialFormType === 'link'
-                                ? 'bg-primary border-primary text-white shadow-sm'
+                                ? 'bg-emerald-600 border-emerald-600 text-white shadow-sm'
                                 : 'bg-white border-outline-variant text-on-surface-variant hover:bg-slate-50'
                             }`}
                           >
-                            Tambah Link
+                            <Link2 className="w-3.5 h-3.5" />
+                            <span>Tautan / Link Manual</span>
                           </button>
                         </div>
                       </div>
@@ -4659,17 +4943,42 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                       </div>
 
                       {materialFormType === 'link' ? (
-                        <div className="space-y-1.5">
-                          <label className="text-xs font-bold text-primary block" htmlFor="materialUrl">URL Tautan</label>
-                          <input
-                            id="materialUrl"
-                            type="text"
-                            value={materialFormUrl}
-                            onChange={(e) => setMaterialFormUrl(e.target.value)}
-                            placeholder="https://example.com/slides"
-                            className="w-full border border-outline-variant/60 rounded-xl p-2.5 bg-white text-xs font-semibold focus:border-primary focus:ring-2 focus:ring-primary/10 transition-all outline-none text-primary font-mono"
-                            required={materialFormType === 'link'}
-                          />
+                        <div className="space-y-2">
+                          <div className="p-3 bg-emerald-50/70 border border-emerald-200/80 rounded-xl text-emerald-950 text-[11px] leading-relaxed">
+                            <p className="font-bold mb-1 text-emerald-900">
+                              💡 Panduan Google Drive:
+                            </p>
+                            <p className="text-emerald-900">
+                              Unggah materi Anda ke Google Drive, lalu pastikan akses link diatur ke publik (Anyone with the link can view). Salin dan tempelkan link materi di bawah ini.
+                            </p>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <label className="text-xs font-bold text-primary block" htmlFor="materialUrl">
+                                Tautan Materi (Google Drive / Web)
+                              </label>
+                              {materialFormUrl && isValidUrl(materialFormUrl) && (
+                                <a
+                                  href={normalizeUrl(materialFormUrl)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[10px] font-bold text-emerald-700 hover:text-emerald-800 hover:underline inline-flex items-center gap-1"
+                                >
+                                  Tes Buka <ExternalLink className="w-3 h-3" />
+                                </a>
+                              )}
+                            </div>
+                            <input
+                              id="materialUrl"
+                              type="text"
+                              value={materialFormUrl}
+                              onChange={(e) => setMaterialFormUrl(e.target.value)}
+                              placeholder="https://drive.google.com/file/d/... atau https://..."
+                              className="w-full border border-outline-variant/60 rounded-xl p-2.5 bg-white text-xs font-semibold focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/10 transition-all outline-none text-primary font-mono"
+                              required={materialFormType === 'link'}
+                            />
+                          </div>
                         </div>
                       ) : (
                         <div className="space-y-1.5">
@@ -4689,6 +4998,7 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                             <label htmlFor="materialFile" className="cursor-pointer block space-y-1">
                               <Upload className="w-5 h-5 text-primary/40 mx-auto mb-1" />
                               <span className="text-[10px] font-bold text-primary block">Pilih berkas dari perangkat Anda</span>
+                              <span className="text-[10px] text-emerald-700 font-bold block">✓ Berkas akan disimpan langsung ke Google Drive materi dosen</span>
                               <span className="text-[9px] text-on-surface-variant font-semibold block">PDF, PPT, PPTX, DOC, XLS, ZIP, dll (Maks. 50MB)</span>
                             </label>
                             {materialFormFile && (
@@ -4707,7 +5017,7 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                       >
                         {isMaterialSubmitting ? (
                           <>
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Menyimpan...
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Mengunggah ke Google Drive...
                           </>
                         ) : (
                           <>
@@ -4740,7 +5050,7 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                 <button
                   type="button"
                   onClick={async () => {
-                    await Promise.all([loadData(), loadEnrollments(), loadCourses()]);
+                    await refreshAllData();
                   }}
                   className="bg-white border border-outline-variant/60 hover:bg-slate-50 text-primary px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer font-sans"
                 >
@@ -4911,6 +5221,11 @@ export default function LecturerPortal({ user, onLogout }: LecturerPortalProps) 
                                     style={{ width: `${item.completionRate}%` }}
                                   />
                                 </div>
+                              )}
+                              {item.lateCount > 0 && (
+                                <span className="text-[9px] text-amber-600 font-semibold mt-0.5">
+                                  {item.lateCount} terlambat
+                                </span>
                               )}
                             </div>
                           </td>
